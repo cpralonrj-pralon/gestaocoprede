@@ -25,6 +25,8 @@ export interface Employee {
     graph_position_x?: number;
     graph_position_y?: number;
     status?: 'active' | 'inactive' | 'on_leave';
+    employee_number?: string;
+    current_hours_balance?: number;
     metadata?: any;
 }
 
