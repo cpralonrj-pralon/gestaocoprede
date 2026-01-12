@@ -48,5 +48,19 @@ npm run build
 ```
 O build será gerado na pasta `/dist`.
 
+## 🚀 Deploy no GitHub Pages
+
+Este projeto está configurado para deploy automático via GitHub Actions.
+
+### Configuração inicial:
+1. Vá em **Settings → Secrets and variables → Actions**
+2. Adicione o secret `GEMINI_API_KEY` com sua chave da API
+3. Vá em **Settings → Pages**
+4. Em **Source**, selecione **GitHub Actions**
+
+### Deploy automático:
+- Cada push na branch `main` dispara o workflow automaticamente
+- O build é gerado e publicado em `https://cpralonrj-pralon.github.io/gestaocoprede/`
+
 ---
 *Gestão Colaborador COP REDE - Transformando dados em performance.*
