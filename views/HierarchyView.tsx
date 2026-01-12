@@ -20,7 +20,9 @@ import {
 import '@xyflow/react/dist/style.css';
 import { getHeadcountSuggestions } from '../services/gemini';
 import { EmployeeRegistrationModal } from '../components/EmployeeRegistrationModal';
+import { CSVImportModal } from '../components/CSVImportModal';
 import { EmployeeProfileView } from './EmployeeProfileView';
+import { EmployeeCSVData } from '../utils/csvParser';
 
 // --- Custom Edge Component ---
 const CustomEdge = ({
@@ -235,6 +237,7 @@ export const HierarchyView: React.FC = () => {
   const [notification, setNotification] = useState<{ msg: string, type: 'success' | 'info' | 'error' } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isCSVModalOpen, setIsCSVModalOpen] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<any | null>(null);
 
   const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
@@ -271,6 +274,75 @@ export const HierarchyView: React.FC = () => {
     }
 
     setNotification({ msg: `Colaborador ${data.name} cadastrado e vinculado!`, type: 'success' });
+    setTimeout(() => setNotification(null), 4000);
+  };
+
+  const handleCSVImport = (employees: EmployeeCSVData[]) => {
+    const newNodes: Node[] = [];
+    const newEdges: Edge[] = [];
+
+    employees.forEach((emp, index) => {
+      const nodeId = `csv-${Date.now()}-${index}`;
+
+      // Determine level based on role
+      let level = 'team';
+      if (emp.cargo.includes('Diretor')) level = 'root';
+      else if (emp.cargo.includes('Coord. II') || emp.cargo.includes('Coordenador II')) level = 'c2';
+      else if (emp.cargo.includes('Coord. I') || emp.cargo.includes('Coordenador I')) level = 'c1';
+
+      const newNode: Node = {
+        id: nodeId,
+        type: 'custom',
+        position: {
+          x: Math.random() * 600 + 100,
+          y: Math.random() * 300 + 400 + (index * 20)
+        },
+        data: {
+          name: emp.nome,
+          role: emp.cargo,
+          img: `https://picsum.photos/seed/${emp.nome.replace(/\s/g, '')}/100/100`,
+          color: 'slate',
+          perf: 100,
+          level,
+          cluster: emp.cluster,
+          loja: emp.loja,
+          email: emp.email,
+          telefone: emp.telefone,
+          dataAdmissao: emp.dataAdmissao,
+          salario: emp.salario
+        }
+      };
+
+      newNodes.push(newNode);
+
+      // Create edge if manager is specified
+      if (emp.gestor) {
+        const managerNode = nodes.find(n =>
+          (n.data.name as string).toLowerCase() === emp.gestor!.toLowerCase()
+        );
+
+        if (managerNode) {
+          const newEdge: Edge = {
+            id: `e-${managerNode.id}-${nodeId}`,
+            source: managerNode.id,
+            target: nodeId,
+            type: 'custom',
+            animated: true,
+            style: { stroke: '#137fec', strokeWidth: 2 },
+            data: { onDelete: handleDeleteEdge }
+          } as Edge;
+          newEdges.push(newEdge);
+        }
+      }
+    });
+
+    setNodes((nds) => nds.concat(newNodes));
+    setEdges((eds) => eds.concat(newEdges));
+
+    setNotification({
+      msg: `${employees.length} colaboradores importados com sucesso!`,
+      type: 'success'
+    });
     setTimeout(() => setNotification(null), 4000);
   };
 
@@ -373,8 +445,15 @@ export const HierarchyView: React.FC = () => {
             <MetricItem label="Conexões" value={edges.length.toString()} color="primary" />
             <MetricItem label="Níveis" value="4" color="emerald" />
             <button
+              onClick={() => setIsCSVModalOpen(true)}
+              className="px-4 py-1.5 bg-emerald-500 text-white rounded-xl text-xs font-black shadow-lg shadow-emerald-500/20 hover:brightness-110 active:scale-95 transition-all flex items-center gap-2 ml-2"
+            >
+              <span className="material-symbols-outlined text-sm">upload_file</span>
+              IMPORTAR CSV
+            </button>
+            <button
               onClick={() => setIsModalOpen(true)}
-              className="px-4 py-1.5 bg-primary text-white rounded-xl text-xs font-black shadow-lg shadow-primary/20 hover:brightness-110 active:scale-95 transition-all flex items-center gap-2 ml-2"
+              className="px-4 py-1.5 bg-primary text-white rounded-xl text-xs font-black shadow-lg shadow-primary/20 hover:brightness-110 active:scale-95 transition-all flex items-center gap-2"
             >
               <span className="material-symbols-outlined text-sm">person_add</span>
               CADASTRAR NOVO
@@ -405,6 +484,13 @@ export const HierarchyView: React.FC = () => {
         onClose={() => setIsModalOpen(false)}
         onSave={handleAddEmployee}
         managers={nodes.filter(n => n.data.level !== 'team').map(n => ({ id: n.id, name: n.data.name }))}
+      />
+
+      <CSVImportModal
+        isOpen={isCSVModalOpen}
+        onClose={() => setIsCSVModalOpen(false)}
+        onImport={handleCSVImport}
+        existingManagers={nodes.filter(n => n.data.level !== 'team').map(n => ({ id: n.id, name: n.data.name }))}
       />
 
       {/* Profile Sidebar Drawer */}
