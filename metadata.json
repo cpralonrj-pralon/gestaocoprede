@@ -1,0 +1,8 @@
+{
+  "name": "PeopleOps - Gestão Operacional & IA",
+  "description": "Uma plataforma completa de gestão de pessoas e operações com insights preditivos de IA, organograma interativo, controle de escalas, férias, banco de horas e gestão de atestados.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
