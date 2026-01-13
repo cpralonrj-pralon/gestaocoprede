@@ -253,7 +253,7 @@ export const HierarchyView = () => {
     try {
       setNotification({ msg: `Sincronizando dados...`, type: 'info' });
 
-      const payload = {
+      const payload: any = {
         full_name: data.name,
         role: data.role,
         cluster: data.cluster || 'Matriz',
@@ -261,11 +261,15 @@ export const HierarchyView = () => {
         phone: data.whatsapp,
         email: data.email || `${data.login.toLowerCase()}@claro.com.br`,
         admission_date: data.admissionDate,
-        employee_number: data.id,
         manager_id: data.managerId === 'root' ? null : data.managerId,
         hierarchy_level: (data.level as any) || 'team',
         status: 'active' as 'active' | 'inactive' | 'on_leave'
       };
+
+      // Only add employee_number if it has a value to avoid unique constraint violations
+      if (data.id && data.id.trim() !== '') {
+        payload.employee_number = data.id;
+      }
 
       let employeeId = '';
 
@@ -293,9 +297,16 @@ export const HierarchyView = () => {
       setSelectedEmployee(null);
       setNotification({ msg: editingEmployee ? 'Dados atualizados!' : 'Colaborador cadastrado!', type: 'success' });
       setTimeout(() => setNotification(null), 3000);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error adding employee:', error);
-      alert('Erro ao cadastrar colaborador no Supabase.');
+
+      // Check for specific error types
+      if (error?.message?.includes('employees_employee_number_key') ||
+        error?.details?.includes('employee_number')) {
+        alert('❌ ERRO: Matrícula duplicada!\n\nEssa matrícula já está cadastrada para outro colaborador.\n\nSolução:\n- Deixe o campo Matrícula VAZIO\n- Ou use um número único (ex: GT001, MROS001)');
+      } else {
+        alert('Erro ao cadastrar colaborador no Supabase.\n\nDetalhes: ' + (error?.message || error?.details || 'Erro desconhecido'));
+      }
     }
   };
 
@@ -303,31 +314,78 @@ export const HierarchyView = () => {
     try {
       setNotification({ msg: `Importando ${data.length} registros...`, type: 'info' });
 
-      const employeesToCreate = data.map(d => ({
-        full_name: d.nome,
-        role: d.cargo,
-        cluster: d.cluster || 'Matriz',
-        login: d.login || '',
-        phone: d.telefone,
-        email: d.email,
-        admission_date: d.dataAdmissao,
-        hierarchy_level: 'team' as const,
-        status: 'active' as const
-      }));
+      // Get all existing employees to find managers
+      const allEmployees = await getAllEmployees();
+      console.log(`[CSV Import] Total de funcionários existentes: ${allEmployees.length}`);
 
+      const employeesToCreate = data.map(d => {
+        // Build employee object with ONLY fields that exist in Supabase
+        const employee: any = {
+          full_name: d.nome,
+          role: d.cargo,
+          cluster: d.cluster || 'Matriz',
+          hierarchy_level: 'team',
+          status: 'active'
+        };
+
+        // Only add optional fields if they have values
+        if (d.email) employee.email = d.email;
+        if (d.telefone) employee.phone = d.telefone;
+        if (d.dataAdmissao) employee.admission_date = d.dataAdmissao;
+
+        // Find manager by name if 'gestor' field is provided
+        if (d.gestor && d.gestor.trim() !== '') {
+          const manager = allEmployees.find(emp =>
+            emp.full_name.toLowerCase().trim() === d.gestor.toLowerCase().trim()
+          );
+
+          if (manager) {
+            employee.manager_id = manager.id;
+            console.log(`[CSV Import] ✅ Vinculando "${d.nome}" ao gestor "${manager.full_name}" (ID: ${manager.id})`);
+          } else {
+            console.warn(`[CSV Import] ⚠️  Gestor "${d.gestor}" NÃO encontrado para "${d.nome}"`);
+          }
+        }
+
+        return employee;
+      });
+
+      console.log('[CSV Import] Sending to Supabase:', JSON.stringify(employeesToCreate[0], null, 2));
       const createdEmployees = await createEmployeesBulk(employeesToCreate);
 
-      // Attempt to create connections if manager identifiers are present
-      // This is a bit complex without IDs in CSV, but usually they have name/email
-      // For now, let's just create the employees. A more robust logic would map connections.
+      console.log(`[CSV Import] ✅ Criados ${createdEmployees.length} colaboradores!`);
+
+      // Now create hierarchy connections for employees that have managers
+      let connectionsCreated = 0;
+      for (let i = 0; i < createdEmployees.length; i++) {
+        const employee = createdEmployees[i];
+        const originalData = data[i];
+
+        if (employee.manager_id) {
+          try {
+            await createConnection(employee.manager_id, employee.id, 'reports_to');
+            connectionsCreated++;
+            console.log(`[CSV Import] 🔗 Conexão criada: ${employee.full_name} → Gestor`);
+          } catch (connError) {
+            console.error(`[CSV Import] ❌ Erro ao criar conexão para ${employee.full_name}:`, connError);
+          }
+        }
+      }
+
+      console.log(`[CSV Import] ✅ Total de conexões criadas: ${connectionsCreated}`);
 
       refreshData();
       setIsCSVModalOpen(false);
       setNotification({ msg: 'Importação concluída com sucesso!', type: 'success' });
       setTimeout(() => setNotification(null), 4000);
-    } catch (error) {
-      console.error('Error in CSV import:', error);
-      alert('Erro ao importar CSV no Supabase.');
+    } catch (error: any) {
+      console.error('[CSV Import] Erro completo:', error);
+      console.error('[CSV Import] Error message:', error?.message);
+      console.error('[CSV Import] Error details:', error?.details);
+
+      // Show detailed error to user
+      const errorMsg = error?.message || error?.details || 'Erro desconhecido ao importar CSV no Supabase';
+      alert(`Erro ao importar CSV:\n\n${errorMsg}\n\nVerifique o console (F12) para mais detalhes.`);
     }
   };
 

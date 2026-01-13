@@ -186,12 +186,11 @@ export const EmployeeRegistrationModal: React.FC<EmployeeRegistrationModalProps>
                         </div>
 
                         <div className="space-y-2">
-                            <label className="text-xs font-black text-slate-500 uppercase tracking-widest ml-1">Matrícula (ID)</label>
+                            <label className="text-xs font-black text-slate-500 uppercase tracking-widest ml-1">Matrícula (ID) - Opcional</label>
                             <input
-                                required
                                 type="text"
                                 className="w-full bg-slate-50 dark:bg-surface-highlight border-none rounded-2xl px-5 py-3.5 text-sm focus:ring-2 ring-primary transition-all"
-                                placeholder="Ex: #12345"
+                                placeholder="Ex: #12345 (deixe vazio se não tiver)"
                                 value={formData.id}
                                 onChange={(e) => setFormData({ ...formData, id: e.target.value.toUpperCase() })}
                             />
@@ -326,6 +325,7 @@ export const EmployeeRegistrationModal: React.FC<EmployeeRegistrationModalProps>
                                 value={formData.managerId}
                                 onChange={(e) => setFormData({ ...formData, managerId: e.target.value })}
                             >
+                                <option value="root">🔹 Sem Gestor (Nível Root)</option>
                                 {managers.map(m => (
                                     <option key={m.id} value={m.id}>{m.name}</option>
                                 ))}
