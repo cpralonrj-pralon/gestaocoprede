@@ -26,6 +26,9 @@ const STATUS_MAP: any = {
   'INSS': { label: 'INSS', class: 'bg-red-600/10 text-red-600 border-red-600/20 font-black' },
   'ATESTADO': { label: 'ATEST', class: 'bg-red-400/10 text-red-400 border-red-400/20' },
   'AFAST': { label: 'AFAST', class: 'bg-orange-500/10 text-orange-500 border-orange-500/20' },
+  'FALTA': { label: 'FALTA', class: 'bg-red-500/10 text-red-500 border-red-500/20' }, // Legacy fallback
+  'FALTA JUSTIFICADA': { label: 'F-JUST', class: 'bg-indigo-500/10 text-indigo-500 border-indigo-500/20 font-black' },
+  'FALTA NÃO JUSTIFICADA': { label: 'F-INJUST', class: 'bg-rose-600/10 text-rose-600 border-rose-600/20 font-black' },
   'vacation': { label: 'FÉRIAS', class: 'bg-indigo-500/10 text-indigo-500 border-indigo-500/20' },
 };
 

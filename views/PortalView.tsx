@@ -1,11 +1,12 @@
-import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../services/supabase/client';
 import { getEmployeeFeedbacks } from '../services/supabase/feedback';
 import { getEmployeeSchedules, saveSchedulesBulk } from '../services/supabase/schedules';
 import { PortalVacationModal } from '../components/PortalVacationModal';
 
 export const PortalView: React.FC = () => {
-  const { userProfile, loading: loadingAuth } = useAuth();
+  const { userProfile, loading: loadingAuth, refreshProfile } = useAuth(); // Adicionado refreshProfile
   const [feedbacks, setFeedbacks] = useState<any[]>([]);
   const [schedules, setSchedules] = useState<any[]>([]);
   const [allVacations, setAllVacations] = useState<any[]>([]);
@@ -13,7 +14,56 @@ export const PortalView: React.FC = () => {
   const [isVacationModalOpen, setIsVacationModalOpen] = useState(false);
   const [currentMonth] = useState(new Date());
 
+  // Upload States
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const currentUser = userProfile;
+
+  // Lógica de Upload de Avatar (Reutilizada e Adaptada)
+  const handleAvatarClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const uploadAvatar = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!currentUser) return;
+    try {
+      setUploading(true);
+
+      if (!event.target.files || event.target.files.length === 0) {
+        throw new Error('Você deve selecionar uma imagem para upload.');
+      }
+
+      const file = event.target.files[0];
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Math.random()}.${fileExt}`;
+      const filePath = `${currentUser.id}/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('avatars')
+        .getPublicUrl(filePath);
+
+      const { error: updateError } = await supabase
+        .from('employees')
+        .update({ photo_url: publicUrl })
+        .eq('id', currentUser.id);
+
+      if (updateError) throw updateError;
+
+      await refreshProfile(); // Atualiza o contexto global (Header e Portal)
+      alert('Foto de perfil atualizada com sucesso!');
+    } catch (error: any) {
+      alert(`Erro ao atualizar foto: ${error.message}`);
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const formatBalance = (seconds: number): string => {
     const absSeconds = Math.abs(seconds);
@@ -151,7 +201,7 @@ export const PortalView: React.FC = () => {
       let current = new Date(start);
       while (current <= end) {
         bulkSchedules.push({
-          employee_id: currentUser.id,
+          employee_id: currentUser!.id,
           schedule_date: current.toISOString().split('T')[0],
           shift_type: 'FÉRIAS',
           status: 'pending',
@@ -191,12 +241,41 @@ export const PortalView: React.FC = () => {
   return (
     <div className="h-full overflow-y-auto p-10 custom-scrollbar bg-slate-50 dark:bg-background-dark font-inter">
       <div className="max-w-7xl mx-auto space-y-12">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-8 bg-white dark:bg-surface-dark p-10 rounded-[3rem] shadow-sm border border-slate-100 dark:border-slate-800">
+        <div className="flex flex-col md:flex-row justify-between md:items-end gap-8 bg-white dark:bg-surface-dark p-10 rounded-[3rem] shadow-sm border border-slate-100 dark:border-slate-800">
           <div className="space-y-4">
             <div className="flex items-center gap-4">
-              <div className="size-20 rounded-3xl overflow-hidden border-2 border-primary/20 p-1">
-                <img src={currentUser.photo_url || `https://picsum.photos/seed/${currentUser.id}/200/200`} className="size-full object-cover rounded-2xl" alt="Profile" />
+              <div
+                className="size-20 rounded-3xl overflow-hidden border-2 border-primary/20 p-1 relative group cursor-pointer"
+                onClick={handleAvatarClick}
+              >
+                <img
+                  src={currentUser.photo_url || `https://picsum.photos/seed/${currentUser.id}/200/200`}
+                  className={`size-full object-cover rounded-2xl transition-opacity ${uploading ? 'opacity-50' : 'opacity-100'}`}
+                  alt="Profile"
+                />
+
+                {/* Overlay Icon */}
+                <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-2xl">
+                  <span className="material-symbols-outlined text-white">photo_camera</span>
+                </div>
+
+                {/* Loading Spinner */}
+                {uploading && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="size-6 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  </div>
+                )}
               </div>
+
+              <input
+                type="file"
+                ref={fileInputRef}
+                className="hidden"
+                accept="image/*"
+                onChange={uploadAvatar}
+                disabled={uploading}
+              />
+
               <div>
                 <h1 className="text-5xl font-black tracking-tight dark:text-white uppercase leading-none">Olá, {currentUser.full_name?.split(' ')[0]}!</h1>
                 <p className="text-slate-500 text-lg font-medium mt-2">{currentUser.role} • Área {currentUser.cluster || 'Geral'}</p>
@@ -251,11 +330,14 @@ export const PortalView: React.FC = () => {
                             <span className={`text-[10px] font-black uppercase tracking-tighter ${isToday ? 'text-white/80' : 'text-primary'}`}>
                               {['FOLGA', 'off', 'FB'].includes(sched.shift_type) ? 'Folga' :
                                 (sched.shift_type === 'vacation' || sched.shift_type === 'FÉRIAS') ? 'Férias' :
-                                  (sched.shift_type || 'Plantão')}
+                                  (sched.shift_type === 'FALTA JUSTIFICADA') ? 'Falta Justificada' :
+                                    (sched.shift_type === 'FALTA NÃO JUSTIFICADA' || sched.shift_type === 'FALTA' || sched.shift_type === 'FALTA INJUSTIFICADA') ? 'Falta' :
+                                      (sched.shift_type || 'Plantão')}
                             </span>
                             <span className={`text-[8px] font-bold uppercase truncate ${isToday ? 'text-white/60' : 'text-slate-400'}`}>
                               {sched.status === 'pending' ? 'Solicitado' :
-                                ['FÉRIAS', 'vacation', 'FB', 'FOLGA', 'off'].includes(sched.shift_type) ? 'Indisponível' : 'Escala'}
+                                ['FÉRIAS', 'vacation', 'FB', 'FOLGA', 'off'].includes(sched.shift_type) ? 'Indisponível' :
+                                  ['FALTA', 'FALTA JUSTIFICADA', 'FALTA NÃO JUSTIFICADA', 'FALTA INJUSTIFICADA', 'SUSPENSÃO'].includes(sched.shift_type) ? 'Ausência' : 'Escala'}
                             </span>
                           </>
                         ) : (

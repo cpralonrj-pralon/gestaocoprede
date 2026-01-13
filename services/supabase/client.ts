@@ -60,7 +60,7 @@ export interface Schedule {
     updated_at: string;
     employee_id: string;
     schedule_date: string;
-    shift_type?: 'morning' | 'afternoon' | 'night' | 'off' | 'vacation' | 'dsr' | '08-17' | '09-18' | '10-19' | '13-22' | 'FOLGA' | 'FÉRIAS' | 'FB' | 'INSS' | 'ATESTADO' | 'AFAST';
+    shift_type?: 'morning' | 'afternoon' | 'night' | 'off' | 'vacation' | 'dsr' | '08-17' | '09-18' | '10-19' | '13-22' | 'FOLGA' | 'FÉRIAS' | 'FB' | 'INSS' | 'ATESTADO' | 'AFAST' | 'FALTA JUSTIFICADA' | 'FALTA NÃO JUSTIFICADA';
     start_time?: string;
     end_time?: string;
     notes?: string;

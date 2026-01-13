@@ -45,7 +45,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule,
           </div>
           {isOpen && (
             <div className="flex flex-col">
-              <h1 className="font-bold text-lg leading-tight dark:text-white">PeopleOps</h1>
+              <h1 className="font-bold text-lg leading-tight dark:text-white">Gestão CopRede</h1>
               <p className="text-xs text-slate-500 dark:text-slate-400">Enterprise v2.4</p>
             </div>
           )}

@@ -1,6 +1,6 @@
-# PeopleOps - Gestão Operacional & IA
+# Gestão CopRede - Gestão Operacional & IA
 
-O PeopleOps é uma plataforma inteligente voltada para a gestão de colaboradores e inteligência operacional para a rede COP. A ferramenta oferece dashboards analíticos, gestão de escalas, feedbacks automatizados e insights gerados por IA para otimizar a performance da equipe.
+O Gestão CopRede é uma plataforma inteligente voltada para a gestão de colaboradores e inteligência operacional para a rede COP. A ferramenta oferece dashboards analíticos, gestão de escalas, feedbacks automatizados e insights gerados por IA para otimizar a performance da equipe.
 
 ## 🚀 Funcionalidades
 

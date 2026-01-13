@@ -80,32 +80,44 @@ export const DashboardView: React.FC<Props> = ({ currentMonth, onMonthChange, se
 
       const areaSchedules = schedules.filter(s => areaEmployeeIds.has(s.employee_id));
 
-      // Calculate Productivity / Presence
-      // Total potential man-days = areaEmployees.length * daysInMonth
-      // Productive days = Count of schedules that are NOT off/vacation/sick
-      const nonProductiveTypes = ['FOLGA', 'DSR', 'FÉRIAS', 'INSS', 'ATESTADO', 'AFAST'];
-      const productiveShifts = areaSchedules.filter(s =>
-        s.shift_type && !nonProductiveTypes.includes(s.shift_type.toUpperCase())
-      ).length;
+      // CLT Art. 473 - Justified Absences
+      // Ensure specific types are matched correctly
+      const justifiedTypes = ['INSS', 'ATESTADO', 'AFAST', 'LICENÇA', 'DOAÇÃO', 'LUTO', 'CASAMENTO', 'FALTA JUSTIFICADA'];
+      const unjustifiedTypes = ['FALTA', 'FALTA INJUSTIFICADA', 'SUSPENSÃO', 'FALTA NÃO JUSTIFICADA'];
+      const offTypes = ['FOLGA', 'DSR', 'FÉRIAS', 'VACATION', 'FB'];
 
-      const totalPotentialShifts = areaEmployees.length * daysInMonth;
+      let productiveCount = 0;
+      let unjustifiedCount = 0;
+      let justifiedCount = 0;
 
-      // If we have schedules, calculate real %. If no schedules (start of month/no data), assume 0 or handle gracefully.
-      const productivityRate = totalPotentialShifts > 0
-        ? (productiveShifts / totalPotentialShifts) * 100
+      areaSchedules.forEach(s => {
+        const type = (s.shift_type || '').toUpperCase().trim();
+        if (!type || offTypes.includes(type)) return; // Ignored (Scheduled Off or Empty)
+
+        if (justifiedTypes.includes(type)) {
+          justifiedCount++;
+          return;
+        }
+        if (unjustifiedTypes.includes(type)) {
+          unjustifiedCount++;
+          return;
+        }
+        productiveCount++; // Default to productive/worked if not absent/off
+      });
+
+      const totalWorkableDays = productiveCount + unjustifiedCount + justifiedCount;
+
+      // Absenteeism Rate
+      const absenteeismRate = totalWorkableDays > 0
+        ? (unjustifiedCount / totalWorkableDays) * 100
         : 0;
 
-      // Adjust for "Work Days" context: standard work month is ~22 days. 
-      // 22/30 is ~73%. So 100% productivity implies working every day? No.
-      // Let's normalize against a standard 22-day work month per employee if needed, 
-      // OR just show the raw "Availability" which includes weekends off appropriately.
-      // For "Performance", managers usually want to see "Coverage". 
-      // Let's scale it: If average is > 70%, it's good (since weekends take up ~30%).
-      // Let's leave raw "Capacity" for now, or maybe normalize to "Business Days"?
-      // Let's stick to raw Available Capacity % (Active Days / Total Days).
+      // Presence / Productivity Rate
+      const productivityRate = totalWorkableDays > 0
+        ? (productiveCount / totalWorkableDays) * 100
+        : 0; // If no workable days, productivity is 0 (or N/A)
 
       const totalBalance = areaEmployees.reduce((acc, curr) => acc + (curr.bankBalance || 0), 0);
-
       const feedbackRate = areaEmployees.length > 0
         ? (areaFeedbacks.length / areaEmployees.length) * 100
         : 0;
@@ -113,11 +125,12 @@ export const DashboardView: React.FC<Props> = ({ currentMonth, onMonthChange, se
       return {
         name: areaName,
         value: Math.round(productivityRate) || 0,
-        rawCount: productiveShifts,
-        abs: "2.5%", // Placeholder as absenteeism logic is complex
+        rawCount: productiveCount,
+        totalWorkable: totalWorkableDays,
+        abs: `${absenteeismRate.toFixed(1)}%`,
         bank: formatBalance(totalBalance),
         feed: `${Math.round(feedbackRate)}%`,
-        color: productivityRate < 60 ? '#fa6238' : (productivityRate < 75 ? '#f59e0b' : '#137fec')
+        color: productivityRate < 60 ? '#fa6238' : (productivityRate < 90 ? '#f59e0b' : '#137fec')
       };
     }).sort((a, b) => b.value - a.value); // Sort by performance
   }, [areas, employees, feedbacks, schedules, currentMonth, formatBalance]);
@@ -151,7 +164,17 @@ export const DashboardView: React.FC<Props> = ({ currentMonth, onMonthChange, se
       const baseAlerts = [
         { type: 'critical', title: 'Risco BH Crítico', desc: `${criticalCount} colaboradores excederam o limite legal de horas negativas.`, icon: 'error', action: 'Ver Detalhes' },
         { type: 'warning', title: 'Feedbacks Pendentes', desc: `Restam ${pendingFeedbacksCount} feedbacks para serem realizados neste mês.`, icon: 'chat_bubble', action: 'Notificar gestores' },
-        { type: 'info', title: 'Saúde da Planta', desc: `A média de performance global está em ${Math.round(areaAggregation.reduce((acc, curr) => acc + curr.value, 0) / (areas.length || 1))}%`, icon: 'analytics', action: 'Investigar' }
+        {
+          type: 'info',
+          title: 'Saúde da Planta',
+          desc: `A média de performance global está em ${Math.round(
+            areaAggregation.reduce((acc, curr) => acc + curr.rawCount, 0) /
+            (areaAggregation.reduce((acc, curr) => acc + curr.totalWorkable, 0) || 1) * 100
+          )
+            }%`,
+          icon: 'analytics',
+          action: 'Investigar'
+        }
       ];
       setAiAlerts(baseAlerts);
       setLoadingAi(false);
@@ -215,7 +238,7 @@ export const DashboardView: React.FC<Props> = ({ currentMonth, onMonthChange, se
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <KpiCard label="Performance Geral" value={`${Math.round(areaAggregation.reduce((acc, curr) => acc + curr.value, 0) / (areas.length || 1))}%`} trend="+1.2%" trendDir="up" color="primary" icon="analytics" progress={85} />
+          <KpiCard label="Performance Geral" value={`${Math.round(areaAggregation.reduce((acc, curr) => acc + curr.rawCount, 0) / (areaAggregation.reduce((acc, curr) => acc + curr.totalWorkable, 0) || 1) * 100)}%`} trend="+1.2%" trendDir="up" color="primary" icon="analytics" progress={85} />
           <KpiCard label="Feedbacks Concluídos" value={`${feedbacks.filter(f => f.period_month === (currentMonth.getMonth() + 1) && operationalEmployees.some(e => e.id === f.employee_id)).length}`} trend="Deste Mês" trendDir="info" color="emerald" icon="chat_bubble" progress={(feedbacks.length / (operationalEmployees.length || 1)) * 100} />
           <KpiCard label="Saldo Total BH" value={formatBalance(totalSeconds)} trend={totalSeconds < 0 ? "Negativo" : "Positivo"} trendDir={totalSeconds < 0 ? "danger" : "up"} color={totalSeconds < 0 ? "danger" : "success"} icon="history" progress={50} />
           <KpiCard label="Risco Crítico" value={criticalCount.toString()} trend="Horas Negativas" trendDir="danger" color="danger" icon="warning" progress={criticalCount * 10} />

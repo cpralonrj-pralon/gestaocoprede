@@ -61,7 +61,7 @@ export const LoginView: React.FC = () => {
                             <span className="material-symbols-outlined text-white text-5xl font-black">shield_person</span>
                         </div>
                         <h1 className="text-4xl font-black text-white tracking-tighter uppercase">
-                            {isResetting ? 'Recuperar' : 'PeopleOps'}
+                            {isResetting ? 'Recuperar' : 'Gestão CopRede'}
                         </h1>
                         <p className="text-slate-400 font-bold text-sm tracking-widest uppercase">
                             {isResetting ? 'Redefina sua senha' : 'Sistema de Gestão COP REDE'}
@@ -132,10 +132,10 @@ export const LoginView: React.FC = () => {
                             {loading ? (
                                 <div className="size-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
                             ) : (
-                                <>
+                                <div className="flex items-center gap-3">
                                     <span>{isResetting ? 'Enviar Link de Recuperação' : 'Entrar no Sistema'}</span>
                                     <span className="material-symbols-outlined">{isResetting ? 'send' : 'login'}</span>
-                                </>
+                                </div>
                             )}
                         </button>
                     </form>
@@ -162,7 +162,7 @@ export const LoginView: React.FC = () => {
             </div>
 
             <div className="absolute bottom-8 left-1/2 -translate-x-1/2 text-[10px] text-slate-600 font-black uppercase tracking-widest flex items-center gap-3">
-                <span>© 2026 PeopleOps Professional</span>
+                <span>© 2026 Gestão CopRede Professional</span>
                 <span className="size-1 bg-slate-700 rounded-full"></span>
                 <span>Build with Gemini IA</span>
             </div>
