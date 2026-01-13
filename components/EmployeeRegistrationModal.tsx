@@ -6,24 +6,27 @@ interface EmployeeRegistrationModalProps {
     onClose: () => void;
     onSave: (employee: any) => void;
     managers: { id: string, name: string }[];
+    editData?: any;
 }
 
 export const EmployeeRegistrationModal: React.FC<EmployeeRegistrationModalProps> = ({
     isOpen,
     onClose,
     onSave,
-    managers
+    managers,
+    editData
 }) => {
     const [formData, setFormData] = useState({
         name: '',
         id: '',
         login: '',
+        email: '',
         photo: 'https://picsum.photos/seed/' + Math.random() + '/200/200',
         address: '',
         city: '',
         uf: '',
         whatsapp: '',
-        role: 'Técnico de Campo',
+        role: 'ANALISTA COP REDE I',
         cluster: 'Norte',
         admissionDate: new Date().toISOString().split('T')[0],
         shift: 'Comercial (8h-18h)',
@@ -37,6 +40,80 @@ export const EmployeeRegistrationModal: React.FC<EmployeeRegistrationModalProps>
     const [isAddingCargo, setIsAddingCargo] = useState(false);
     const [isAddingCluster, setIsAddingCluster] = useState(false);
     const [isAddingShift, setIsAddingShift] = useState(false);
+
+    // Reset or Populate form when modal opens or editData changes
+    React.useEffect(() => {
+        if (isOpen) {
+            if (editData) {
+                setFormData({
+                    name: editData.name || '',
+                    id: editData.employee_number || editData.id || '',
+                    login: editData.login || '',
+                    email: editData.email || '',
+                    photo: editData.img || `https://picsum.photos/seed/${Math.random()}/200/200`,
+                    address: editData.address || '',
+                    city: editData.city || '',
+                    uf: editData.uf || '',
+                    whatsapp: editData.whatsapp || '',
+                    role: editData.role || 'ANALISTA COP REDE I',
+                    cluster: editData.cluster || 'EMPRESARIAL',
+                    admissionDate: editData.admission_date || new Date().toISOString().split('T')[0],
+                    shift: editData.shift || 'Comercial (8h-18h)',
+                    managerId: editData.managerId || managers[0]?.id || 'root'
+                });
+            } else {
+                setFormData({
+                    name: '',
+                    id: '',
+                    login: '',
+                    email: '',
+                    photo: 'https://picsum.photos/seed/' + Math.random() + '/200/200',
+                    address: '',
+                    city: '',
+                    uf: '',
+                    whatsapp: '',
+                    role: 'ANALISTA COP REDE I',
+                    cluster: 'EMPRESARIAL',
+                    admissionDate: new Date().toISOString().split('T')[0],
+                    shift: 'Comercial (8h-18h)',
+                    managerId: managers[0]?.id || 'root'
+                });
+            }
+            setIsAddingCargo(false);
+            setIsAddingCluster(false);
+            setIsAddingShift(false);
+            setNewCargo('');
+            setNewCluster('');
+            setNewShift('');
+        }
+    }, [isOpen, editData, managers]);
+
+    const calculateTenure = (dateStr: string) => {
+        if (!dateStr) return 'N/A';
+        const admission = new Date(dateStr);
+        const today = new Date();
+
+        let years = today.getFullYear() - admission.getFullYear();
+        let months = today.getMonth() - admission.getMonth();
+        let days = today.getDate() - admission.getDate();
+
+        if (days < 0) {
+            months -= 1;
+            const prevMonthLastDay = new Date(today.getFullYear(), today.getMonth(), 0).getDate();
+            days += prevMonthLastDay;
+        }
+        if (months < 0) {
+            years -= 1;
+            months += 12;
+        }
+
+        const parts = [];
+        if (years > 0) parts.push(`${years} ${years === 1 ? 'ano' : 'anos'}`);
+        if (months > 0) parts.push(`${months} ${months === 1 ? 'mês' : 'meses'}`);
+        if (days > 0 || parts.length === 0) parts.push(`${days} ${days === 1 ? 'dia' : 'dias'}`);
+
+        return parts.join(', ');
+    };
 
     if (!isOpen) return null;
 
@@ -65,8 +142,8 @@ export const EmployeeRegistrationModal: React.FC<EmployeeRegistrationModalProps>
                                 <span className="material-symbols-outlined text-2xl">person_add</span>
                             </div>
                             <div>
-                                <h3 className="text-xl font-black tracking-tight">Novo Colaborador</h3>
-                                <p className="text-xs text-slate-500 font-medium">Cadastro dinâmico com reatribuição IA</p>
+                                <h3 className="text-xl font-black tracking-tight">{editData ? 'Editar Colaborador' : 'Novo Colaborador'}</h3>
+                                <p className="text-xs text-slate-500 font-medium">{editData ? 'Atualize as informações do perfil' : 'Cadastro dinâmico com reatribuição IA'}</p>
                             </div>
                         </div>
                         <button onClick={onClose} className="size-10 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center transition-all text-slate-400">
@@ -92,7 +169,7 @@ export const EmployeeRegistrationModal: React.FC<EmployeeRegistrationModalProps>
                                 className="w-full bg-slate-50 dark:bg-surface-highlight border-none rounded-2xl px-5 py-3.5 text-sm focus:ring-2 ring-primary transition-all"
                                 placeholder="Ex: Roberto Carlos Silva"
                                 value={formData.name}
-                                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                                onChange={(e) => setFormData({ ...formData, name: e.target.value.toUpperCase() })}
                             />
                         </div>
 
@@ -104,7 +181,7 @@ export const EmployeeRegistrationModal: React.FC<EmployeeRegistrationModalProps>
                                 className="w-full bg-slate-50 dark:bg-surface-highlight border-none rounded-2xl px-5 py-3.5 text-sm focus:ring-2 ring-primary transition-all"
                                 placeholder="Ex: roberto.silva"
                                 value={formData.login}
-                                onChange={(e) => setFormData({ ...formData, login: e.target.value })}
+                                onChange={(e) => setFormData({ ...formData, login: e.target.value.toUpperCase() })}
                             />
                         </div>
 
@@ -116,7 +193,18 @@ export const EmployeeRegistrationModal: React.FC<EmployeeRegistrationModalProps>
                                 className="w-full bg-slate-50 dark:bg-surface-highlight border-none rounded-2xl px-5 py-3.5 text-sm focus:ring-2 ring-primary transition-all"
                                 placeholder="Ex: #12345"
                                 value={formData.id}
-                                onChange={(e) => setFormData({ ...formData, id: e.target.value })}
+                                onChange={(e) => setFormData({ ...formData, id: e.target.value.toUpperCase() })}
+                            />
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="text-xs font-black text-slate-500 uppercase tracking-widest ml-1">E-mail Corporativo</label>
+                            <input
+                                type="email"
+                                className="w-full bg-slate-50 dark:bg-surface-highlight border-none rounded-2xl px-5 py-3.5 text-sm focus:ring-2 ring-primary transition-all"
+                                placeholder="roberto.silva@claro.com.br"
+                                value={formData.email}
+                                onChange={(e) => setFormData({ ...formData, email: e.target.value.toUpperCase() })}
                             />
                         </div>
 
@@ -127,8 +215,27 @@ export const EmployeeRegistrationModal: React.FC<EmployeeRegistrationModalProps>
                                 className="w-full bg-slate-50 dark:bg-surface-highlight border-none rounded-2xl px-5 py-3.5 text-sm focus:ring-2 ring-primary transition-all"
                                 placeholder="(00) 00000-0000"
                                 value={formData.whatsapp}
-                                onChange={(e) => setFormData({ ...formData, whatsapp: e.target.value })}
+                                onChange={(e) => setFormData({ ...formData, whatsapp: e.target.value.toUpperCase() })}
                             />
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="text-xs font-black text-slate-500 uppercase tracking-widest ml-1">Data de Admissão</label>
+                            <input
+                                required
+                                type="date"
+                                className="w-full bg-slate-50 dark:bg-surface-highlight border-none rounded-2xl px-5 py-3.5 text-sm focus:ring-2 ring-primary transition-all"
+                                value={formData.admissionDate}
+                                onChange={(e) => setFormData({ ...formData, admissionDate: e.target.value })}
+                            />
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="text-xs font-black text-slate-500 uppercase tracking-widest ml-1">Tempo de Casa</label>
+                            <div className="w-full bg-primary/5 dark:bg-primary/10 border border-primary/20 rounded-2xl px-5 py-3.5 text-sm font-bold text-primary flex items-center gap-2">
+                                <span className="material-symbols-outlined text-lg">history</span>
+                                {calculateTenure(formData.admissionDate)}
+                            </div>
                         </div>
 
                         {/* Section: Localização */}
@@ -143,7 +250,7 @@ export const EmployeeRegistrationModal: React.FC<EmployeeRegistrationModalProps>
                                 className="w-full bg-slate-50 dark:bg-surface-highlight border-none rounded-2xl px-5 py-3.5 text-sm focus:ring-2 ring-primary transition-all"
                                 placeholder="Rua, Número, Bairro, Complemento"
                                 value={formData.address}
-                                onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                                onChange={(e) => setFormData({ ...formData, address: e.target.value.toUpperCase() })}
                             />
                         </div>
 
@@ -154,7 +261,7 @@ export const EmployeeRegistrationModal: React.FC<EmployeeRegistrationModalProps>
                                 className="w-full bg-slate-50 dark:bg-surface-highlight border-none rounded-2xl px-5 py-3.5 text-sm focus:ring-2 ring-primary transition-all"
                                 placeholder="Ex: São Paulo"
                                 value={formData.city}
-                                onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+                                onChange={(e) => setFormData({ ...formData, city: e.target.value.toUpperCase() })}
                             />
                         </div>
 
@@ -193,12 +300,11 @@ export const EmployeeRegistrationModal: React.FC<EmployeeRegistrationModalProps>
                                     }
                                 }}
                             >
-                                <option value="Diretor de Operações">Diretor de Operações</option>
-                                <option value="Coordenador II">Coordenador II</option>
-                                <option value="Coordenador I">Coordenador I</option>
-                                <option value="Técnico de Campo">Técnico de Campo</option>
-                                <option value="Supervisor">Supervisor</option>
-                                <option value="Analista">Analista</option>
+                                <option value="COORDENADOR COP REDE I">COORDENADOR COP REDE I</option>
+                                <option value="COORDENADOR COP REDE II">COORDENADOR COP REDE II</option>
+                                <option value="ANALISTA COP REDE I">ANALISTA COP REDE I</option>
+                                <option value="ANALISTA COP REDE II">ANALISTA COP REDE II</option>
+                                <option value="GERENTE TECNICO">GERENTE TECNICO</option>
                                 <option value="NEW">+ Adicionar Novo Cargo...</option>
                             </select>
                             {isAddingCargo && (
@@ -208,7 +314,7 @@ export const EmployeeRegistrationModal: React.FC<EmployeeRegistrationModalProps>
                                     placeholder="Nome do novo cargo"
                                     className="w-full bg-primary/5 dark:bg-primary/10 border border-primary/20 rounded-2xl px-5 py-3 text-sm animate-in slide-in-from-top-2"
                                     value={newCargo}
-                                    onChange={(e) => setNewCargo(e.target.value)}
+                                    onChange={(e) => setNewCargo(e.target.value.toUpperCase())}
                                 />
                             )}
                         </div>
@@ -226,9 +332,9 @@ export const EmployeeRegistrationModal: React.FC<EmployeeRegistrationModalProps>
                             </select>
                         </div>
 
-                        {/* CLUSTER DYNAMIC FIELD */}
+                        {/* ÁREA DYNAMIC FIELD */}
                         <div className="space-y-2">
-                            <label className="text-xs font-black text-slate-500 uppercase tracking-widest ml-1">Cluster</label>
+                            <label className="text-xs font-black text-slate-500 uppercase tracking-widest ml-1">Área</label>
                             <select
                                 className="w-full bg-slate-50 dark:bg-surface-highlight border-none rounded-2xl px-5 py-3.5 text-sm focus:ring-2 ring-primary transition-all"
                                 value={isAddingCluster ? "NEW" : formData.cluster}
@@ -241,20 +347,20 @@ export const EmployeeRegistrationModal: React.FC<EmployeeRegistrationModalProps>
                                     }
                                 }}
                             >
-                                <option value="Norte">Norte</option>
-                                <option value="Sul">Sul</option>
-                                <option value="Leste">Leste</option>
-                                <option value="Oeste">Oeste</option>
-                                <option value="NEW">+ Adicionar Novo Cluster...</option>
+                                <option value="EMPRESARIAL">EMPRESARIAL</option>
+                                <option value="RESIDENCIAL FIBRA GPON">RESIDENCIAL FIBRA GPON</option>
+                                <option value="RESIDENCIAL CORI XPERTRAK">RESIDENCIAL CORI XPERTRAK</option>
+                                <option value="RESIDENCIAL HFC CTO">RESIDENCIAL HFC CTO</option>
+                                <option value="NEW">+ Adicionar Nova Área...</option>
                             </select>
                             {isAddingCluster && (
                                 <input
                                     autoFocus
                                     type="text"
-                                    placeholder="Nome do novo cluster"
+                                    placeholder="Nome da nova área"
                                     className="w-full bg-primary/5 dark:bg-primary/10 border border-primary/20 rounded-2xl px-5 py-3 text-sm animate-in slide-in-from-top-2"
                                     value={newCluster}
-                                    onChange={(e) => setNewCluster(e.target.value)}
+                                    onChange={(e) => setNewCluster(e.target.value.toUpperCase())}
                                 />
                             )}
                         </div>
@@ -286,7 +392,7 @@ export const EmployeeRegistrationModal: React.FC<EmployeeRegistrationModalProps>
                                     placeholder="Detalhes da nova escala"
                                     className="w-full bg-primary/5 dark:bg-primary/10 border border-primary/20 rounded-2xl px-5 py-3 text-sm animate-in slide-in-from-top-2"
                                     value={newShift}
-                                    onChange={(e) => setNewShift(e.target.value)}
+                                    onChange={(e) => setNewShift(e.target.value.toUpperCase())}
                                 />
                             )}
                         </div>
@@ -306,7 +412,7 @@ export const EmployeeRegistrationModal: React.FC<EmployeeRegistrationModalProps>
                             type="submit"
                             className="flex-1 py-4 rounded-2xl bg-primary text-white font-black uppercase tracking-widest text-xs shadow-lg shadow-primary/20 hover:brightness-110 active:scale-95 transition-all"
                         >
-                            Salvar Colaborador
+                            {editData ? 'Salvar Alterações' : 'Salvar Colaborador'}
                         </button>
                     </div>
                 </form>

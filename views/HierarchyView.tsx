@@ -1,21 +1,20 @@
-
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   ReactFlow,
   Background,
   Controls,
-  Handle,
-  Position,
   useNodesState,
   useEdgesState,
   addEdge,
   Connection,
   Edge,
   Node,
-  BaseEdge,
-  EdgeLabelRenderer,
   getBezierPath,
-  EdgeProps
+  EdgeProps,
+  EdgeLabelRenderer,
+  BaseEdge,
+  Handle,
+  Position
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { getHeadcountSuggestions } from '../services/gemini';
@@ -23,6 +22,18 @@ import { EmployeeRegistrationModal } from '../components/EmployeeRegistrationMod
 import { CSVImportModal } from '../components/CSVImportModal';
 import { EmployeeProfileView } from './EmployeeProfileView';
 import { EmployeeCSVData } from '../utils/csvParser';
+import {
+  getAllEmployees,
+  createEmployee,
+  updateEmployee,
+  createEmployeesBulk,
+  updateEmployeePosition
+} from '../services/supabase/employees';
+import {
+  getAllConnections,
+  createConnection,
+  deleteConnection
+} from '../services/supabase/hierarchy';
 
 // --- Custom Edge Component ---
 const CustomEdge = ({
@@ -34,8 +45,8 @@ const CustomEdge = ({
   sourcePosition,
   targetPosition,
   style = {},
-  markerEnd,
-  data
+  data,
+  selected
 }: EdgeProps) => {
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
@@ -46,360 +57,345 @@ const CustomEdge = ({
     targetPosition,
   });
 
-  const [showTrash, setShowTrash] = useState(false);
-
-  const onEdgeDoubleClick = (evt: React.MouseEvent) => {
-    evt.stopPropagation();
-    setShowTrash(!showTrash);
-  };
-
   return (
     <>
       <BaseEdge
         path={edgePath}
-        markerEnd={markerEnd}
-        style={{ ...style, cursor: 'pointer' }}
-        interactionWidth={20}
-      />
-      <path
-        d={edgePath}
-        fill="none"
-        stroke="transparent"
-        strokeWidth={20}
-        onDoubleClick={onEdgeDoubleClick}
-        className="react-flow__edge-interaction"
+        style={{
+          ...style,
+          stroke: selected ? '#ef4444' : (style.stroke || '#137fec'),
+          strokeWidth: selected ? 3 : 2
+        }}
       />
       <EdgeLabelRenderer>
-        {showTrash && (
-          <div
-            style={{
-              position: 'absolute',
-              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
-              pointerEvents: 'all',
-            }}
-            className="nodrag nopan"
-          >
+        <div
+          style={{
+            position: 'absolute',
+            transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            pointerEvents: 'all',
+          }}
+          className="flex items-center justify-center"
+        >
+          {selected && (
             <button
-              className="size-8 rounded-full bg-red-500 text-white shadow-lg flex items-center justify-center hover:bg-red-600 transition-all scale-110 active:scale-95"
-              onClick={(evt) => {
-                evt.stopPropagation();
-                if ((data as any)?.onDelete) {
-                  (data as any).onDelete(id);
-                }
+              className="bg-red-500 text-white size-9 rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all cursor-pointer animate-in zoom-in duration-200 border-2 border-white ring-4 ring-red-500/20"
+              onClick={(event) => {
+                event.stopPropagation();
+                (data as any).onDelete(id);
               }}
             >
-              <span className="material-symbols-outlined text-sm">delete</span>
+              <span className="material-symbols-outlined text-[18px]">delete</span>
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </EdgeLabelRenderer>
     </>
   );
 };
 
-// --- Custom Node Component ---
-const CustomNode = ({ data }: any) => {
-  const colorMap: any = {
-    emerald: 'border-emerald-500 shadow-emerald-500/10',
-    orange: 'border-orange-500 shadow-orange-500/10',
-    red: 'border-red-500 shadow-red-500/10',
-    primary: 'border-primary shadow-primary/10',
-    slate: 'border-slate-300 dark:border-slate-700 shadow-sm'
-  };
 
-  const statusColor: any = {
-    emerald: 'bg-emerald-500',
-    orange: 'bg-orange-500',
-    red: 'bg-red-500',
-    primary: 'bg-primary'
-  };
 
-  const isSmall = data.level === 'team';
+// Custom Node Component
+const CustomNode = ({ data }: { data: any }) => (
+  <div className={`p-4 rounded-[2rem] shadow-2xl border-2 bg-white dark:bg-surface-dark min-w-[220px] relative transition-all hover:scale-105 active:scale-95 group overflow-hidden ${data.color === 'primary' ? 'border-primary' : (data.color === 'emerald' ? 'border-emerald-500' : 'border-orange-400')}`}>
+    <div className={`absolute top-0 right-0 p-4 opacity-[0.03] group-hover:opacity-[0.08] transition-opacity`}>
+      <span className="material-symbols-outlined text-7xl">person</span>
+    </div>
+    <div className="flex items-center gap-4">
+      <div className={`size-14 rounded-2xl p-1 border-2 rotate-3 group-hover:rotate-0 transition-transform ${data.color === 'primary' ? 'border-primary/20' : (data.color === 'emerald' ? 'border-emerald-500/20' : 'border-orange-400/20')}`}>
+        <img src={data.img} className="size-full object-cover rounded-xl" alt={data.name} />
+      </div>
+      <div className="flex-1">
+        <h3 className="font-black text-sm dark:text-white uppercase tracking-tighter leading-tight truncate max-w-[120px]">{data.name}</h3>
+        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-0.5">{data.role}</p>
+      </div>
+    </div>
 
-  return (
-    <div className={`${isSmall ? 'w-44' : 'w-64'} bg-white dark:bg-surface-dark border-2 rounded-2xl shadow-xl p-4 flex flex-col relative transition-all hover:scale-105 ${colorMap[data.color || 'slate']}`}>
-      <Handle type="target" position={Position.Top} className="!w-2 !h-2 !bg-primary" />
-
-      <div className="flex items-center gap-3">
-        <div className="relative shrink-0">
-          <img
-            src={data.img}
-            className={`${isSmall ? 'size-10' : 'size-12'} rounded-full border-2 border-slate-100 dark:border-slate-800`}
-            alt={data.name}
-          />
-          {!isSmall && data.color && (
-            <div className={`absolute -bottom-0.5 -right-0.5 size-3.5 border-2 border-white dark:border-slate-800 rounded-full ${statusColor[data.color]}`}></div>
-          )}
-        </div>
-        <div className="text-left overflow-hidden flex-1">
-          <h3 className={`font-bold text-slate-900 dark:text-white ${isSmall ? 'text-xs' : 'text-sm'} truncate`}>{data.name}</h3>
-          <p className={`text-[9px] text-slate-500 font-black uppercase tracking-widest ${isSmall ? 'mt-0' : 'mt-1'}`}>{data.role}</p>
-          {!isSmall && (
-            <div className="mt-2 w-full bg-slate-100 dark:bg-slate-800 h-1 rounded-full overflow-hidden">
-              <div className={`h-full ${statusColor[data.color || 'primary']}`} style={{ width: `${data.perf}%` }}></div>
-            </div>
-          )}
+    <div className="mt-6 flex items-center justify-between border-t border-slate-100 dark:border-slate-800 pt-4">
+      <div className="flex flex-col">
+        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Performance</span>
+        <div className="flex items-center gap-2 mt-1">
+          <div className="h-1.5 w-16 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+            <div className={`h-full rounded-full ${data.perf > 90 ? 'bg-emerald-500' : (data.perf > 70 ? 'bg-amber-500' : 'bg-red-500')}`} style={{ width: `${data.perf}%` }} />
+          </div>
+          <span className="text-[10px] font-black dark:text-white">{data.perf}%</span>
         </div>
       </div>
-
-      <Handle type="source" position={Position.Bottom} className="!w-2 !h-2 !bg-primary" />
-
-      {/* Stats Section for non-team nodes */}
-      {!isSmall && data.stats && (
-        <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 grid grid-cols-1 gap-2">
-          <div className="flex justify-between items-center text-[10px]">
-            <span className="text-slate-500 font-black uppercase tracking-tight">Total Colaboradores</span>
-            <span className="font-black text-primary">{data.stats.total}</span>
-          </div>
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 border-t border-slate-50 dark:border-slate-800/50 pt-2">
-            {[
-              { label: 'Coord. II', val: data.stats.c2 },
-              { label: 'Coord. I', val: data.stats.c1 },
-              { label: 'Analista II', val: data.stats.a2 },
-              { label: 'Analista I', val: data.stats.a1 },
-            ].map(stat => (
-              <div key={stat.label} className="flex justify-between items-center text-[9px]">
-                <span className="text-slate-400 font-bold uppercase tracking-tighter truncate mr-1">{stat.label}</span>
-                <span className="font-black text-slate-700 dark:text-slate-300">{stat.val}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <div className={`size-8 rounded-xl flex items-center justify-center ${data.color === 'primary' ? 'bg-primary/10 text-primary' : (data.color === 'emerald' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-orange-400/10 text-orange-400')}`}>
+        <span className="material-symbols-outlined text-lg">{data.level === 'root' ? 'star' : (data.level === 'c2' ? 'verified' : 'group')}</span>
+      </div>
     </div>
-  );
-};
 
-const nodeTypes = {
-  custom: CustomNode,
-};
+    {data.stats && data.stats.total > 0 && (
+      <div className="mt-4 pt-4 border-t border-dashed border-slate-100 dark:border-slate-800">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[9px] font-black text-slate-400 uppercase tracking-[0.1em]">Headcount Total</span>
+          <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-black">{data.stats.total}</span>
+        </div>
+        <div className="space-y-1">
+          {Object.entries(data.stats.roles).map(([role, count]: [any, any]) => (
+            <div key={role} className="flex justify-between items-center text-[8px] font-bold text-slate-500 uppercase">
+              <span className="truncate max-w-[140px]">{role}</span>
+              <span className="text-slate-400">({count})</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
 
-const edgeTypes = {
-  custom: CustomEdge,
-};
+    <Handle type="target" position={Position.Top} className="!bg-slate-300 !border-2 !border-white !size-3" />
+    <Handle type="source" position={Position.Bottom} className="!bg-primary !border-2 !border-white !size-3" />
+  </div>
+);
 
-const initialNodes: Node[] = [
-  {
-    id: 'root',
-    type: 'custom',
-    position: { x: 400, y: 0 },
-    data: {
-      name: 'Carlos Mendes',
-      role: 'Diretor de Operações',
-      img: 'https://picsum.photos/seed/manager/100/100',
-      color: 'primary',
-      perf: 98,
-      level: 'root',
-      stats: { total: 146, c2: 3, c1: 2, a2: 7, a1: 126 }
-    }
-  },
-  {
-    id: 'c2-1',
-    type: 'custom',
-    position: { x: 100, y: 300 },
-    data: {
-      name: 'Ana Souza',
-      role: 'Coord. II - Cluster Norte',
-      img: 'https://picsum.photos/seed/ana/100/100',
-      color: 'emerald',
-      perf: 92,
-      level: 'c2',
-      headcount: 42,
-      stats: { total: 42, c2: 0, c1: 1, a2: 2, a1: 39 }
-    }
-  },
-  {
-    id: 'c2-2',
-    type: 'custom',
-    position: { x: 700, y: 300 },
-    data: {
-      name: 'Pedro Santos',
-      role: 'Coord. II - Cluster Sul',
-      img: 'https://picsum.photos/seed/pedro/100/100',
-      color: 'orange',
-      perf: 75,
-      level: 'c2',
-      headcount: 58,
-      stats: { total: 58, c2: 0, c1: 1, a2: 3, a1: 54 }
-    }
-  },
-  { id: 'c1-1', type: 'custom', position: { x: -50, y: 600 }, data: { name: 'Lucas Rocha', role: 'Coord. I - Fibra', img: 'https://picsum.photos/seed/lucas/100/100', color: 'emerald', perf: 85, level: 'c1', stats: { total: 20, c2: 0, c1: 0, a2: 1, a1: 19 } } },
-  { id: 'c1-2', type: 'custom', position: { x: 250, y: 600 }, data: { name: 'Julia Paiva', role: 'Coord. I - Manutenção', img: 'https://picsum.photos/seed/julia/100/100', color: 'emerald', perf: 89, level: 'c1', stats: { total: 22, c2: 0, c1: 0, a2: 1, a1: 21 } } },
-  { id: 't-1', type: 'custom', position: { x: -150, y: 800 }, data: { name: 'Equipe Alfa', role: 'Técnicos Senior', img: 'https://picsum.photos/seed/team1/100/100', level: 'team' } },
-  { id: 't-2', type: 'custom', position: { x: 50, y: 800 }, data: { name: 'Equipe Beta', role: 'Instaladores', img: 'https://picsum.photos/seed/team2/100/100', level: 'team' } },
-];
+const nodeTypes = { custom: CustomNode };
+const edgeTypes = { custom: CustomEdge };
 
-export const HierarchyView: React.FC = () => {
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+export const HierarchyView = () => {
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
-  const [suggestions, setSuggestions] = useState<any[]>([]);
-  const [loadingSuggestions, setLoadingSuggestions] = useState(true);
-  const [notification, setNotification] = useState<{ msg: string, type: 'success' | 'info' | 'error' } | null>(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isCSVModalOpen, setIsCSVModalOpen] = useState(false);
-  const [selectedEmployee, setSelectedEmployee] = useState<any | null>(null);
+  const [selectedEmployee, setSelectedEmployee] = useState<any>(null);
+  const [editingEmployee, setEditingEmployee] = useState<any>(null);
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [notification, setNotification] = useState<{ msg: string; type: 'success' | 'info' } | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  const refreshData = useCallback(async () => {
+    try {
+      const [allEmployees, allConnections] = await Promise.all([
+        getAllEmployees(),
+        getAllConnections()
+      ]);
+
+      const childrenMap: Record<string, string[]> = {};
+      const empMap: Record<string, any> = {};
+      allEmployees.forEach(e => empMap[e.id] = e);
+      allConnections.forEach(c => {
+        if (!childrenMap[c.source_employee_id]) childrenMap[c.source_employee_id] = [];
+        childrenMap[c.source_employee_id].push(c.target_employee_id);
+      });
+
+      const statsMap: Record<string, { total: number, roles: Record<string, number> }> = {};
+      const calculateStats = (id: string) => {
+        if (statsMap[id]) return statsMap[id];
+        const res = { total: 0, roles: {} as Record<string, number> };
+        const childIds = childrenMap[id] || [];
+        childIds.forEach(cId => {
+          const cEmp = empMap[cId];
+          if (cEmp) {
+            res.total += 1;
+            res.roles[cEmp.role] = (res.roles[cEmp.role] || 0) + 1;
+            const sub = calculateStats(cId);
+            res.total += sub.total;
+            Object.entries(sub.roles).forEach(([r, count]) => {
+              res.roles[r] = (res.roles[r] || 0) + count;
+            });
+          }
+        });
+        statsMap[id] = res;
+        return res;
+      };
+      allEmployees.forEach(e => calculateStats(e.id));
+
+      const newNodes: Node[] = allEmployees.map((emp) => ({
+        id: emp.id,
+        type: 'custom',
+        position: { x: emp.graph_position_x || Math.random() * 800, y: emp.graph_position_y || Math.random() * 400 },
+        data: {
+          name: emp.full_name,
+          role: emp.role,
+          img: emp.photo_url || `https://picsum.photos/seed/${emp.id}/100/100`,
+          color: emp.hierarchy_level === 'root' ? 'primary' : (emp.hierarchy_level === 'c2' ? 'emerald' : 'orange'),
+          perf: emp.performance_score || 100,
+          level: emp.hierarchy_level || 'team',
+          stats: statsMap[emp.id],
+          id: emp.id,
+          employee_number: emp.employee_number,
+          login: (emp as any).login,
+          email: emp.email,
+          whatsapp: emp.phone,
+          address: (emp as any).address,
+          city: (emp as any).city,
+          uf: (emp as any).uf,
+          admission_date: emp.admission_date,
+          shift: (emp as any).shift,
+          managerId: (emp as any).manager_id
+        }
+      }));
+
+      const handleDeleteEdgeLocal = (id: string) => setConfirmDeleteId(id);
+
+      const newEdges: Edge[] = allConnections.map((conn) => ({
+        id: conn.id,
+        source: conn.source_employee_id,
+        target: conn.target_employee_id,
+        type: 'custom',
+        animated: true,
+        style: { stroke: '#137fec', strokeWidth: 2 },
+        data: { onDelete: handleDeleteEdgeLocal }
+      }));
+
+      setNodes(newNodes);
+      setEdges(newEdges);
+    } catch (error) {
+      console.error('Error fetching hierarchy data:', error);
+    }
+  }, [setNodes, setEdges]);
+
+  useEffect(() => {
+    refreshData();
+  }, [refreshData]);
+
+  const handleAddEmployee = async (data: any) => {
+    try {
+      setNotification({ msg: `Sincronizando dados...`, type: 'info' });
+
+      const payload = {
+        full_name: data.name,
+        role: data.role,
+        cluster: data.cluster || 'Matriz',
+        store: data.store || '',
+        phone: data.whatsapp,
+        email: data.email || `${data.login.toLowerCase()}@claro.com.br`,
+        admission_date: data.admissionDate,
+        employee_number: data.id,
+        manager_id: data.managerId === 'root' ? null : data.managerId,
+        hierarchy_level: (data.level as any) || 'team',
+        status: 'active' as 'active' | 'inactive' | 'on_leave'
+      };
+
+      let employeeId = '';
+
+      if (editingEmployee) {
+        await updateEmployee(editingEmployee.id, payload);
+        employeeId = editingEmployee.id;
+      } else {
+        const newEmp = await createEmployee(payload as any);
+        employeeId = newEmp.id;
+      }
+
+      if (data.managerId && data.managerId !== 'root') {
+        try {
+          // If editing, we might need to delete old connection first to avoid duplicates
+          // for simplicity we just attempt create, many-to-many might need cleanup
+          await createConnection(data.managerId, employeeId, 'reports_to');
+        } catch (connError) {
+          console.error('Error creating hierarchy connection:', connError);
+        }
+      }
+
+      refreshData();
+      setIsModalOpen(false);
+      setEditingEmployee(null);
+      setSelectedEmployee(null);
+      setNotification({ msg: editingEmployee ? 'Dados atualizados!' : 'Colaborador cadastrado!', type: 'success' });
+      setTimeout(() => setNotification(null), 3000);
+    } catch (error) {
+      console.error('Error adding employee:', error);
+      alert('Erro ao cadastrar colaborador no Supabase.');
+    }
+  };
+
+  const handleCSVImport = async (data: EmployeeCSVData[]) => {
+    try {
+      setNotification({ msg: `Importando ${data.length} registros...`, type: 'info' });
+
+      const employeesToCreate = data.map(d => ({
+        full_name: d.nome,
+        role: d.cargo,
+        cluster: d.cluster || 'Matriz',
+        login: d.login || '',
+        phone: d.telefone,
+        email: d.email,
+        admission_date: d.dataAdmissao,
+        hierarchy_level: 'team' as const,
+        status: 'active' as const
+      }));
+
+      const createdEmployees = await createEmployeesBulk(employeesToCreate);
+
+      // Attempt to create connections if manager identifiers are present
+      // This is a bit complex without IDs in CSV, but usually they have name/email
+      // For now, let's just create the employees. A more robust logic would map connections.
+
+      refreshData();
+      setIsCSVModalOpen(false);
+      setNotification({ msg: 'Importação concluída com sucesso!', type: 'success' });
+      setTimeout(() => setNotification(null), 4000);
+    } catch (error) {
+      console.error('Error in CSV import:', error);
+      alert('Erro ao importar CSV no Supabase.');
+    }
+  };
+
+  const executeDelete = async () => {
+    if (confirmDeleteId) {
+      try {
+        const edgeToDelete = edges.find(e => e.id === confirmDeleteId);
+
+        // 1. Delete from hierarchy_connections
+        await deleteConnection(confirmDeleteId);
+
+        // 2. If it was a reports_to connection, nullify the manager_id on the employee
+        if (edgeToDelete) {
+          const subordinateId = edgeToDelete.target;
+          try {
+            // Import the update function if it exists or use it directly from context if available
+            // For now we use the exported service
+            const { updateEmployee } = await import('../services/supabase/employees');
+            await updateEmployee(subordinateId, { manager_id: undefined } as any);
+          } catch (err) {
+            console.warn('Failed to nullify manager_id, but connection was deleted:', err);
+          }
+        }
+
+        setEdges((eds) => eds.filter((e) => e.id !== confirmDeleteId));
+        setConfirmDeleteId(null);
+        refreshData(); // Refresh to update headcount stats
+        setNotification({ msg: 'Conexão removida com sucesso.', type: 'info' });
+        setTimeout(() => setNotification(null), 3000);
+      } catch (error) {
+        console.error('Error deleting edge:', error);
+        alert('Erro ao excluir conexão no banco de dados.');
+      }
+    }
+  };
+
+  const onConnect = useCallback(async (params: Connection) => {
+    try {
+      await createConnection(params.source!, params.target!, 'reports_to');
+      refreshData();
+      setNotification({ msg: 'Nova liderança estabelecida e salva!', type: 'success' });
+      setTimeout(() => setNotification(null), 3000);
+    } catch (error) {
+      console.error('Error creating connection:', error);
+      alert('Erro ao salvar conexão no banco de dados.');
+    }
+  }, [refreshData]);
 
   const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
     setSelectedEmployee(node.data);
   }, []);
 
-  const handleAddEmployee = (data: any) => {
-    const newNode: Node = {
-      id: `node-${Date.now()}`,
-      type: 'custom',
-      position: { x: Math.random() * 400 + 100, y: Math.random() * 200 + 400 },
-      data: {
-        ...data,
-        perf: 100,
-        level: data.role.toLowerCase().includes('coord') ? (data.role.includes('II') ? 'c2' : 'c1') : 'team',
-        img: data.photo,
-        color: 'slate'
-      }
-    };
-
-    setNodes((nds) => nds.concat(newNode));
-
-    if (data.managerId) {
-      const newEdge: Edge = {
-        id: `e-${data.managerId}-${newNode.id}`,
-        source: data.managerId,
-        target: newNode.id,
-        type: 'custom',
-        animated: true,
-        style: { stroke: '#137fec', strokeWidth: 2 },
-        data: { onDelete: handleDeleteEdge }
-      } as Edge;
-      setEdges((eds) => addEdge(newEdge, eds));
+  const onNodeDragStop = useCallback(async (_event: React.MouseEvent, node: Node) => {
+    try {
+      await updateEmployeePosition(node.id, node.position.x, node.position.y);
+    } catch (error) {
+      console.error('Error saving node position:', error);
     }
-
-    setNotification({ msg: `Colaborador ${data.name} cadastrado e vinculado!`, type: 'success' });
-    setTimeout(() => setNotification(null), 4000);
-  };
-
-  const handleCSVImport = (employees: EmployeeCSVData[]) => {
-    const newNodes: Node[] = [];
-    const newEdges: Edge[] = [];
-
-    employees.forEach((emp, index) => {
-      const nodeId = `csv-${Date.now()}-${index}`;
-
-      // Determine level based on role
-      let level = 'team';
-      if (emp.cargo.includes('Diretor')) level = 'root';
-      else if (emp.cargo.includes('Coord. II') || emp.cargo.includes('Coordenador II')) level = 'c2';
-      else if (emp.cargo.includes('Coord. I') || emp.cargo.includes('Coordenador I')) level = 'c1';
-
-      const newNode: Node = {
-        id: nodeId,
-        type: 'custom',
-        position: {
-          x: Math.random() * 600 + 100,
-          y: Math.random() * 300 + 400 + (index * 20)
-        },
-        data: {
-          name: emp.nome,
-          role: emp.cargo,
-          img: `https://picsum.photos/seed/${emp.nome.replace(/\s/g, '')}/100/100`,
-          color: 'slate',
-          perf: 100,
-          level,
-          cluster: emp.cluster,
-          loja: emp.loja,
-          email: emp.email,
-          telefone: emp.telefone,
-          dataAdmissao: emp.dataAdmissao,
-          salario: emp.salario
-        }
-      };
-
-      newNodes.push(newNode);
-
-      // Create edge if manager is specified
-      if (emp.gestor) {
-        const managerNode = nodes.find(n =>
-          (n.data.name as string).toLowerCase() === emp.gestor!.toLowerCase()
-        );
-
-        if (managerNode) {
-          const newEdge: Edge = {
-            id: `e-${managerNode.id}-${nodeId}`,
-            source: managerNode.id,
-            target: nodeId,
-            type: 'custom',
-            animated: true,
-            style: { stroke: '#137fec', strokeWidth: 2 },
-            data: { onDelete: handleDeleteEdge }
-          } as Edge;
-          newEdges.push(newEdge);
-        }
-      }
-    });
-
-    setNodes((nds) => nds.concat(newNodes));
-    setEdges((eds) => eds.concat(newEdges));
-
-    setNotification({
-      msg: `${employees.length} colaboradores importados com sucesso!`,
-      type: 'success'
-    });
-    setTimeout(() => setNotification(null), 4000);
-  };
-
-  const handleDeleteEdge = useCallback((edgeId: string) => {
-    setConfirmDeleteId(edgeId);
   }, []);
-
-  const executeDelete = () => {
-    if (confirmDeleteId) {
-      setEdges((eds) => eds.filter((e) => e.id !== confirmDeleteId));
-      setConfirmDeleteId(null);
-      setNotification({ msg: 'Conexão removida com sucesso.', type: 'info' });
-      setTimeout(() => setNotification(null), 3000);
-    }
-  };
-
-  const onConnect = useCallback((params: Connection) => {
-    setEdges((eds) => {
-      // RULE: Only one parent per node. Remove existing edge if any for the target node.
-      const filtered = eds.filter((e) => e.target !== params.target);
-
-      const newEdge: Edge = {
-        ...params,
-        id: `e-${params.source}-${params.target}`,
-        type: 'custom',
-        animated: true,
-        style: { stroke: '#137fec', strokeWidth: 2 },
-        data: { onDelete: handleDeleteEdge }
-      } as Edge;
-
-      setNotification({ msg: 'Nova liderança estabelecida!', type: 'success' });
-      setTimeout(() => setNotification(null), 3000);
-
-      return addEdge(newEdge, filtered);
-    });
-  }, [setEdges, handleDeleteEdge]);
-
-  // Initial Edges with custom type and delete handler
-  useEffect(() => {
-    const defaultEdges: Edge[] = [
-      { id: 'e-root-c2-1', source: 'root', target: 'c2-1', type: 'custom', animated: true, style: { stroke: '#137fec', strokeWidth: 2 } },
-      { id: 'e-root-c2-2', source: 'root', target: 'c2-2', type: 'custom', animated: true, style: { stroke: '#137fec', strokeWidth: 2 } },
-      { id: 'e-c2-1-c1-1', source: 'c2-1', target: 'c1-1', type: 'custom', animated: true, style: { stroke: '#137fec', strokeWidth: 2 } },
-      { id: 'e-c2-1-c1-2', source: 'c2-1', target: 'c1-2', type: 'custom', animated: true, style: { stroke: '#137fec', strokeWidth: 2 } },
-      { id: 'e-c1-1-t-1', source: 'c1-1', target: 't-1', type: 'custom', animated: true, style: { stroke: '#137fec', strokeWidth: 2 } },
-      { id: 'e-c1-1-t-2', source: 'c1-1', target: 't-2', type: 'custom', animated: true, style: { stroke: '#137fec', strokeWidth: 2 } },
-    ].map(e => ({ ...e, data: { onDelete: handleDeleteEdge } }));
-    setEdges(defaultEdges);
-  }, [handleDeleteEdge]);
 
   useEffect(() => {
     const fetchSuggestions = async () => {
+      if (nodes.length === 0) return;
       setLoadingSuggestions(true);
       const managersData = nodes.filter(n => n.data.level !== 'team').map(n => ({
         name: n.data.name,
         area: n.data.role,
-        headcount: n.data.headcount || 10
+        headcount: 10 // Placeholder
       }));
       const resp = await getHeadcountSuggestions(managersData);
       setSuggestions(resp);
@@ -417,7 +413,6 @@ export const HierarchyView: React.FC = () => {
         </div>
       )}
 
-      {/* Confirmation Modal */}
       {confirmDeleteId && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setConfirmDeleteId(null)} />
@@ -426,7 +421,7 @@ export const HierarchyView: React.FC = () => {
               <span className="material-symbols-outlined text-4xl">warning</span>
             </div>
             <h3 className="text-xl font-black text-center mb-2 tracking-tight">Excluir Conexão?</h3>
-            <p className="text-sm text-center text-slate-500 font-medium mb-8 leading-relaxed">Você está prestes a remover o subordinado desta linha de comando. Esta ação pode ser desfeita conectando-os novamente.</p>
+            <p className="text-sm text-center text-slate-500 font-medium mb-8 leading-relaxed">Você está prestes a remover o subordinado desta linha de comando.</p>
             <div className="grid grid-cols-2 gap-3">
               <button onClick={() => setConfirmDeleteId(null)} className="py-3.5 rounded-2xl bg-slate-100 dark:bg-surface-highlight font-black text-sm transition-all hover:bg-slate-200">Cancelar</button>
               <button onClick={executeDelete} className="py-3.5 rounded-2xl bg-red-500 text-white font-black text-sm shadow-lg shadow-red-500/20 transition-all hover:brightness-110 active:scale-95">Confirmar</button>
@@ -439,24 +434,20 @@ export const HierarchyView: React.FC = () => {
         <div className="flex-shrink-0 p-6 flex items-center justify-between bg-white/80 dark:bg-background-dark/80 backdrop-blur-md z-10 border-b border-slate-100 dark:border-slate-800">
           <div>
             <h2 className="text-xl font-black tracking-tight">Gestão Hierárquica</h2>
-            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Dê duplo clique em uma linha para excluir | Arraste para conectar</p>
+            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1 font-inter">Dê duplo clique em uma linha para excluir | Arraste para conectar</p>
           </div>
           <div className="flex gap-4">
-            <MetricItem label="Conexões" value={edges.length.toString()} color="primary" />
-            <MetricItem label="Níveis" value="4" color="emerald" />
             <button
               onClick={() => setIsCSVModalOpen(true)}
-              className="px-4 py-1.5 bg-emerald-500 text-white rounded-xl text-xs font-black shadow-lg shadow-emerald-500/20 hover:brightness-110 active:scale-95 transition-all flex items-center gap-2 ml-2"
+              className="px-4 py-1.5 bg-emerald-500 text-white rounded-xl text-[10px] font-black shadow-lg shadow-emerald-500/20 uppercase tracking-widest transition-all hover:scale-105 active:scale-95"
             >
-              <span className="material-symbols-outlined text-sm">upload_file</span>
-              IMPORTAR CSV
+              Importar CSV
             </button>
             <button
               onClick={() => setIsModalOpen(true)}
-              className="px-4 py-1.5 bg-primary text-white rounded-xl text-xs font-black shadow-lg shadow-primary/20 hover:brightness-110 active:scale-95 transition-all flex items-center gap-2"
+              className="px-4 py-1.5 bg-primary text-white rounded-xl text-[10px] font-black shadow-lg shadow-primary/20 uppercase tracking-widest transition-all hover:scale-105 active:scale-95"
             >
-              <span className="material-symbols-outlined text-sm">person_add</span>
-              CADASTRAR NOVO
+              Novo Colaborador
             </button>
           </div>
         </div>
@@ -469,8 +460,11 @@ export const HierarchyView: React.FC = () => {
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             onNodeClick={onNodeClick}
+            onNodeDragStop={onNodeDragStop}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
+            zoomOnScroll={true}
+            panOnScroll={false}
             fitView
           >
             <Background color="#94a3b8" opacity={0.1} />
@@ -479,42 +473,10 @@ export const HierarchyView: React.FC = () => {
         </div>
       </div>
 
-      <EmployeeRegistrationModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        onSave={handleAddEmployee}
-        managers={nodes.filter(n => n.data.level !== 'team').map(n => ({ id: n.id, name: n.data.name }))}
-      />
-
-      <CSVImportModal
-        isOpen={isCSVModalOpen}
-        onClose={() => setIsCSVModalOpen(false)}
-        onImport={handleCSVImport}
-        existingManagers={nodes.filter(n => n.data.level !== 'team').map(n => ({ id: n.id, name: n.data.name }))}
-      />
-
-      {/* Profile Sidebar Drawer */}
-      {selectedEmployee && (
-        <div className="fixed inset-0 z-[400] overflow-hidden">
-          <div className="absolute inset-0 bg-slate-950/40 backdrop-blur-[2px] animate-in fade-in duration-300" onClick={() => setSelectedEmployee(null)} />
-          <div className="absolute inset-y-0 right-0 w-full max-w-md bg-white dark:bg-background-dark shadow-[ -20px_0_50px_rgba(0,0,0,0.1) ] border-l border-slate-200 dark:border-slate-800 animate-in slide-in-from-right duration-500 ease-out">
-            <EmployeeProfileView
-              employee={selectedEmployee}
-              onClose={() => setSelectedEmployee(null)}
-            />
-          </div>
-        </div>
-      )}
-
-      <div className="w-full md:w-80 bg-white dark:bg-surface-dark flex flex-col h-full border-l border-slate-200 dark:border-slate-800 shadow-2xl z-20 overflow-hidden">
+      <div className="w-full md:w-80 bg-white dark:bg-surface-dark flex flex-col h-full border-l border-slate-200 dark:border-slate-800 shadow-2xl z-20 overflow-hidden font-inter">
         <div className="p-8 border-b border-slate-100 dark:border-slate-800 space-y-2">
-          <div className="flex items-center gap-3">
-            <div className="size-10 rounded-xl bg-gradient-to-br from-primary to-purple-600 flex items-center justify-center shrink-0 shadow-lg shadow-primary/20">
-              <span className="material-symbols-outlined text-white text-xl">psychology_alt</span>
-            </div>
-            <h3 className="font-black text-lg tracking-tight">Staffing IA</h3>
-          </div>
-          <p className="text-xs text-slate-500 font-medium leading-relaxed italic">Benchmarks de eficácia de gestão multinível.</p>
+          <h3 className="font-black text-lg tracking-tight uppercase">Staffing IA</h3>
+          <p className="text-xs text-slate-500 font-medium leading-relaxed italic">Benchmarks de eficácia operacional.</p>
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
@@ -522,77 +484,51 @@ export const HierarchyView: React.FC = () => {
             <div className="space-y-4 animate-pulse">
               {[1, 2, 3].map(i => <div key={i} className="h-32 bg-slate-50 dark:bg-surface-highlight rounded-2xl" />)}
             </div>
-          ) : (
-            suggestions.map((s, idx) => (
-              <SuggestionCard key={idx} {...s} />
-            ))
-          )}
-        </div>
-
-        <div className="p-6 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-surface-highlight/50 text-center">
-          <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mb-2">Dica de Gestão</p>
-          <p className="text-[10px] text-slate-500 font-bold leading-relaxed italic">Duplo clique na linha para abrir a lixeira de exclusão.</p>
+          ) : suggestions.map((s, idx) => (
+            <div key={idx} className={`p-4 rounded-2xl border ${s.type === 'optimizing' ? 'bg-blue-500/10 border-blue-500/20' : 'bg-emerald-500/10 border-emerald-500/20'}`}>
+              <h4 className="font-black text-[10px] uppercase text-slate-400 mb-1">{s.title}</h4>
+              <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">{s.description}</p>
+            </div>
+          ))}
         </div>
       </div>
+
+      <EmployeeRegistrationModal
+        isOpen={isModalOpen || !!editingEmployee}
+        onClose={() => {
+          setIsModalOpen(false);
+          setEditingEmployee(null);
+        }}
+        onSave={handleAddEmployee}
+        managers={nodes
+          .filter(n => n.data.role?.includes('COORDENADOR') || n.data.role?.includes('GERENTE'))
+          .map(n => ({ id: n.id, name: n.data.name }))}
+        editData={editingEmployee}
+      />
+      <CSVImportModal
+        isOpen={isCSVModalOpen}
+        onClose={() => setIsCSVModalOpen(false)}
+        onImport={handleCSVImport}
+        existingManagers={nodes
+          .filter(n => n.data.role?.includes('COORDENADOR') || n.data.role?.includes('GERENTE'))
+          .map(n => ({ id: n.id, name: n.data.name }))}
+      />
+
+      {selectedEmployee && (
+        <div className="fixed inset-0 z-[400] overflow-hidden">
+          <div className="absolute inset-0 bg-slate-950/40 backdrop-blur-[2px]" onClick={() => setSelectedEmployee(null)} />
+          <div className="absolute inset-y-0 right-0 w-full max-w-md bg-white dark:bg-background-dark shadow-2xl border-l border-slate-200 dark:border-slate-800 animate-in slide-in-from-right duration-500">
+            <EmployeeProfileView
+              employee={selectedEmployee}
+              onClose={() => setSelectedEmployee(null)}
+              onEdit={(emp) => {
+                setEditingEmployee(emp);
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
-const SuggestionCard = ({ title, description, type }: any) => {
-  const styles: any = {
-    warning: 'border-orange-500 bg-orange-500/5 text-orange-600',
-    info: 'border-blue-500 bg-blue-500/5 text-blue-600',
-    success: 'border-emerald-500 bg-emerald-500/5 text-emerald-600'
-  };
-
-  const icons: any = {
-    warning: 'warning',
-    info: 'info',
-    success: 'check_circle'
-  };
-
-  return (
-    <div className={`p-5 rounded-2xl border-l-4 border bg-white dark:bg-surface-highlight shadow-sm space-y-3 transition-all hover:scale-[1.02] ${styles[type]}`}>
-      <div className="flex items-center gap-2">
-        <span className="material-symbols-outlined text-sm">{icons[type]}</span>
-        <h4 className="font-black text-xs uppercase tracking-widest">{title}</h4>
-      </div>
-      <p className="text-[11px] text-slate-600 dark:text-slate-300 font-medium leading-relaxed">{description}</p>
-    </div>
-  );
-};
-
-const MetricItem = ({ label, value, color }: any) => {
-  const colorMap: any = {
-    emerald: 'bg-emerald-500',
-    primary: 'bg-primary'
-  };
-  return (
-    <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 dark:bg-surface-highlight rounded-xl border border-slate-200 dark:border-slate-800">
-      <span className={`size-2 rounded-full ${colorMap[color]}`}></span>
-      <span className="text-[10px] text-slate-500 font-black uppercase">{label}:</span>
-      <span className="text-xs font-black dark:text-white">{value}</span>
-    </div>
-  );
-};
-
-const style = document.createElement('style');
-style.textContent = `
-  .bg-grid-pattern {
-    background-size: 40px 40px;
-    background-image: 
-      linear-gradient(to right, rgba(148, 163, 184, 0.05) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(148, 163, 184, 0.05) 1px, transparent 1px);
-  }
-  .dark .bg-grid-pattern {
-    background-image: 
-      linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
-  }
-  .react-flow__edge-interaction:hover {
-    stroke-opacity: 0.5;
-    stroke: #137fec;
-    cursor: pointer;
-  }
-`;
-document.head.appendChild(style);

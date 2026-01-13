@@ -1,6 +1,7 @@
 
 import React from 'react';
 import { ModuleId } from '../types';
+import { useAuth } from '../context/AuthContext';
 
 interface SidebarProps {
   activeModule: ModuleId;
@@ -10,18 +11,30 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule, isOpen }) => {
-  const menuItems = [
-    { id: 'dashboard', icon: 'dashboard', label: 'Dashboard' },
-    { id: 'hierarchy', icon: 'account_tree', label: 'Hierarquia' },
-    { id: 'schedules', icon: 'schedule', label: 'Escalas' },
-    { id: 'vacations', icon: 'beach_access', label: 'Férias' },
-    { id: 'overtime', icon: 'hourglass_empty', label: 'Banco de Horas' },
-    { id: 'feedbacks', icon: 'rate_review', label: 'Feedbacks' },
-    { id: 'certificates', icon: 'description', label: 'Atestados' },
-    { id: 'profile', icon: 'person', label: 'Perfil Colaborador' },
-    { id: 'portal', icon: 'account_circle', label: 'Portal Colaborador' },
-    { id: 'ai-insights', icon: 'auto_awesome', label: 'IA Command Center', highlight: true },
+  const { userProfile, signOut } = useAuth();
+
+  const allMenuItems = [
+    { id: 'dashboard', icon: 'dashboard', label: 'Dashboard', roles: ['ADMIN', 'GESTOR', 'COORDENADOR', 'SUPERVISOR'] },
+    { id: 'hierarchy', icon: 'account_tree', label: 'Hierarquia', roles: ['ADMIN', 'GESTOR', 'COORDENADOR', 'SUPERVISOR'] },
+    { id: 'schedules', icon: 'schedule', label: 'Escalas', roles: ['ADMIN', 'GESTOR', 'COORDENADOR', 'SUPERVISOR'] },
+    { id: 'vacations', icon: 'beach_access', label: 'Férias', roles: ['ADMIN', 'GESTOR', 'COORDENADOR', 'SUPERVISOR'] },
+    { id: 'overtime', icon: 'hourglass_empty', label: 'Banco de Horas', roles: ['ADMIN', 'GESTOR', 'COORDENADOR', 'SUPERVISOR'] },
+    { id: 'feedbacks', icon: 'rate_review', label: 'Feedbacks', roles: ['ADMIN', 'GESTOR', 'COORDENADOR', 'SUPERVISOR'] },
+    { id: 'certificates', icon: 'description', label: 'Atestados', roles: ['ADMIN', 'GESTOR', 'COORDENADOR', 'SUPERVISOR'] },
+    { id: 'profile', icon: 'person', label: 'Perfil Colaborador', roles: ['ADMIN', 'GESTOR', 'COORDENADOR', 'SUPERVISOR', 'COLABORADOR', 'ANALISTA', 'TECNICO'] },
+    { id: 'portal', icon: 'account_circle', label: 'Portal Colaborador', roles: ['ADMIN', 'GESTOR', 'COORDENADOR', 'SUPERVISOR', 'COLABORADOR', 'ANALISTA', 'TECNICO'] },
+    { id: 'ai-insights', icon: 'auto_awesome', label: 'IA Command Center', highlight: true, roles: ['ADMIN', 'GESTOR', 'COORDENADOR', 'SUPERVISOR'] },
   ];
+
+  const userRole = userProfile?.role?.toUpperCase() || 'ADMIN'; // Default to ADMIN if no profile (for global owners)
+
+  const menuItems = allMenuItems.filter(item => {
+    if (userRole === 'ADMIN') return true;
+    return item.roles.includes(userRole) ||
+      (userRole.includes('COORDENADOR') && item.roles.includes('GESTOR')) ||
+      (userRole.includes('SUPERVISOR') && item.roles.includes('GESTOR')) ||
+      (['ANALISTA', 'TECNICO', 'COLABORADOR'].some(r => userRole.includes(r)) && item.roles.includes('COLABORADOR'));
+  });
 
   return (
     <aside className={`${isOpen ? 'w-64' : 'w-20'} flex-shrink-0 border-r border-slate-200 dark:border-slate-800 bg-surface-light dark:bg-[#111418] flex flex-col transition-all duration-300 z-50`}>
@@ -44,13 +57,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule,
           <button
             key={item.id}
             onClick={() => setActiveModule(item.id as ModuleId)}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all group ${
-              activeModule === item.id
-                ? 'bg-primary text-white shadow-lg shadow-primary/20'
-                : item.highlight 
-                  ? 'text-primary hover:bg-primary/10'
-                  : 'text-slate-600 dark:text-[#9dabb9] hover:bg-slate-100 dark:hover:bg-[#283039]'
-            }`}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all group ${activeModule === item.id
+              ? 'bg-primary text-white shadow-lg shadow-primary/20'
+              : item.highlight
+                ? 'text-primary hover:bg-primary/10'
+                : 'text-slate-600 dark:text-[#9dabb9] hover:bg-slate-100 dark:hover:bg-[#283039]'
+              }`}
           >
             <span className={`material-symbols-outlined text-[24px] ${activeModule === item.id ? '' : 'group-hover:scale-110 transition-transform'}`}>
               {item.icon}
@@ -61,15 +73,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule,
       </nav>
 
       <div className="p-4 border-t border-slate-200 dark:border-slate-800">
-        <div className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">
-          <div 
+        <div
+          onClick={() => signOut()}
+          className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer group">
+          <div
             className="size-9 rounded-full bg-slate-200 dark:bg-slate-700 bg-cover bg-center border border-primary/20"
-            style={{ backgroundImage: `url('https://lh3.googleusercontent.com/aida-public/AB6AXuA72gOGa0IQ0QeS4ldwvHgCNZaP2nvFp8Nx36OIp_Ol-LQLoLNrmd16Mwh2ZfTnhlT586G7MQ0UwpfGMFn_P1HF2t99aouPChxi6qy9GrODbLFPnQFKOONCLajv01kWxP58Bjah_BGLNhB5p39fEK8X78IhqS6BTiYhlnKu6Nu6WmvEYwWcuLw3Mr2dCUh3brb8xhrInIOWItTv3b-ho3UU8PPc9bbxpI3ArukHYDCySmMiImoaeOvpXpUfiLg8e_USW4TLfhrKzw')` }}
+            style={{ backgroundImage: `url(${userProfile?.photo_url || `https://picsum.photos/seed/${userProfile?.id || 'admin'}/200/200`})` }}
           />
           {isOpen && (
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-bold truncate dark:text-white">Admin Global</p>
-              <p className="text-xs text-slate-500 truncate">Sair</p>
+              <p className="text-sm font-bold truncate dark:text-white capitalize">{userProfile?.full_name?.toLowerCase() || 'Admin Global'}</p>
+              <p className="text-xs text-slate-500 truncate group-hover:text-red-400 transition-colors uppercase font-black tracking-tighter">Sair do Sistema</p>
             </div>
           )}
         </div>

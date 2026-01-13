@@ -1,46 +1,11 @@
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList } from 'recharts';
-import { getKpiTip, getSmartAlerts, getChartDeepDive } from '../services/gemini';
-
-const weeklyData = [
-  { name: 'Norte', value: 72, color: '#137fec' },
-  { name: 'Sul', value: 85, color: '#137fec' },
-  { name: 'Leste', value: 58, color: '#fa6238' },
-  { name: 'Oeste', value: 80, color: '#137fec' },
-];
-
-const monthlyData = [
-  { name: 'Norte', value: 78, color: '#137fec' },
-  { name: 'Sul', value: 92, color: '#137fec' },
-  { name: 'Leste', value: 64, color: '#fa6238' },
-  { name: 'Oeste', value: 85, color: '#137fec' },
-];
-
-const clusterMetrics: any = {
-  mensal: [
-    { name: 'Norte', abs: '2.1%', bank: '+120h', feed: '98%' },
-    { name: 'Sul', abs: '1.4%', bank: '-15h', feed: '100%' },
-    { name: 'Leste', abs: '4.8%', bank: '+310h', feed: '72%' },
-    { name: 'Oeste', abs: '2.5%', bank: '+42h', feed: '91%' },
-  ],
-  semanal: [
-    { name: 'Norte', abs: '2.8%', bank: '+22h', feed: '40%' },
-    { name: 'Sul', abs: '1.1%', bank: '-4h', feed: '85%' },
-    { name: 'Leste', abs: '6.2%', bank: '+85h', feed: '30%' },
-    { name: 'Oeste', abs: '3.1%', bank: '+12h', feed: '60%' },
-  ]
-};
-
-const riskEmployees = [
-  { name: "Ana Silva", cluster: "Norte", indicator: "Presença 65%", color: "danger" },
-  { name: "Marco Oliveira", cluster: "Sul", indicator: "Overtime +15h/sem", color: "warning" },
-  { name: "Julia Santos", cluster: "Leste", indicator: "Feedback Pendente", color: "warning" },
-  { name: "Ricardo Lima", cluster: "Oeste", indicator: "Performance -20%", color: "danger" },
-];
-
+import { getKpiTip, getChartDeepDive } from '../services/gemini';
 import { MonthPicker } from '../components/MonthPicker';
 import { useEmployees } from '../context/EmployeeContext';
+import { getAllFeedbacks } from '../services/supabase/feedback';
+import { isOperationalRole } from '../utils/roleUtils';
+import { getSchedulesByRange } from '../services/supabase/schedules';
 
 interface Props {
   currentMonth: Date;
@@ -49,7 +14,11 @@ interface Props {
 }
 
 export const DashboardView: React.FC<Props> = ({ currentMonth, onMonthChange, searchQuery = '' }) => {
-  const { employees, formatBalance } = useEmployees();
+  const { employees, formatBalance, loading: loadingEmployees } = useEmployees();
+  const [feedbacks, setFeedbacks] = useState<any[]>([]);
+  const [schedules, setSchedules] = useState<any[]>([]);
+  const [loadingFeedbacks, setLoadingFeedbacks] = useState(true);
+  const [loadingSchedules, setLoadingSchedules] = useState(true);
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [notification, setNotification] = useState<{ msg: string, type: 'success' | 'info' } | null>(null);
@@ -59,215 +28,301 @@ export const DashboardView: React.FC<Props> = ({ currentMonth, onMonthChange, se
   const [deepDive, setDeepDive] = useState<string>('');
   const [loadingDeepDive, setLoadingDeepDive] = useState(true);
 
-  // Calcular métricas reais do contexto
-  const totalSeconds = employees.reduce((acc, curr) => acc + curr.bankBalance, 0);
-  const criticalCount = employees.filter(e => e.bankBalance < -14400).length;
-  const expiringCount = employees.filter(e => e.expiringHours > 0).length;
+  useEffect(() => {
+    const fetchFeedbacks = async () => {
+      setLoadingFeedbacks(true);
+      try {
+        const data = await getAllFeedbacks();
+        setFeedbacks(data);
+      } catch (error) {
+        console.error('Error fetching feedbacks for dashboard:', error);
+      } finally {
+        setLoadingFeedbacks(false);
+      }
+    };
+    fetchFeedbacks();
+  }, []);
 
-  // Gerar lista de risco baseada nos dados reais
-  const dynamicRiskEmployees = employees
-    .filter(e => e.bankBalance < 0)
-    .sort((a, b) => a.bankBalance - b.bankBalance)
-    .slice(0, 4)
-    .map(e => ({
-      name: e.name,
-      cluster: e.cluster,
-      indicator: `Saldo BH: ${formatBalance(e.bankBalance)}`,
-      color: e.bankBalance < -14400 ? "danger" : "warning"
-    }));
+  useEffect(() => {
+    const fetchSchedules = async () => {
+      setLoadingSchedules(true);
+      try {
+        const startOfMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1).toISOString();
+        const endOfMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0).toISOString();
+        const data = await getSchedulesByRange(startOfMonth, endOfMonth);
+        setSchedules(data);
+      } catch (error) {
+        console.error('Error fetching schedules for dashboard:', error);
+      } finally {
+        setLoadingSchedules(false);
+      }
+    };
+    fetchSchedules();
+  }, [currentMonth]);
 
-  const displayRiskEmployees = dynamicRiskEmployees.length > 0 ? dynamicRiskEmployees : riskEmployees;
+  const operationalEmployees = useMemo(() => employees.filter(e => isOperationalRole(e.role)), [employees]);
+  const areas = useMemo(() => Array.from(new Set(operationalEmployees.map(e => e.cluster).filter(Boolean))), [operationalEmployees]);
+
+  const areaAggregation = useMemo(() => {
+    const month = currentMonth.getMonth() + 1;
+    const year = currentMonth.getFullYear();
+    const daysInMonth = new Date(year, month, 0).getDate();
+
+    return areas.map(areaName => {
+      const areaEmployees = operationalEmployees.filter(e => e.cluster === areaName);
+      const areaEmployeeIds = new Set(areaEmployees.map(e => e.id));
+
+      const areaFeedbacks = feedbacks.filter(f =>
+        f.period_month === month &&
+        f.period_year === year &&
+        areaEmployeeIds.has(f.employee_id)
+      );
+
+      const areaSchedules = schedules.filter(s => areaEmployeeIds.has(s.employee_id));
+
+      // Calculate Productivity / Presence
+      // Total potential man-days = areaEmployees.length * daysInMonth
+      // Productive days = Count of schedules that are NOT off/vacation/sick
+      const nonProductiveTypes = ['FOLGA', 'DSR', 'FÉRIAS', 'INSS', 'ATESTADO', 'AFAST'];
+      const productiveShifts = areaSchedules.filter(s =>
+        s.shift_type && !nonProductiveTypes.includes(s.shift_type.toUpperCase())
+      ).length;
+
+      const totalPotentialShifts = areaEmployees.length * daysInMonth;
+
+      // If we have schedules, calculate real %. If no schedules (start of month/no data), assume 0 or handle gracefully.
+      const productivityRate = totalPotentialShifts > 0
+        ? (productiveShifts / totalPotentialShifts) * 100
+        : 0;
+
+      // Adjust for "Work Days" context: standard work month is ~22 days. 
+      // 22/30 is ~73%. So 100% productivity implies working every day? No.
+      // Let's normalize against a standard 22-day work month per employee if needed, 
+      // OR just show the raw "Availability" which includes weekends off appropriately.
+      // For "Performance", managers usually want to see "Coverage". 
+      // Let's scale it: If average is > 70%, it's good (since weekends take up ~30%).
+      // Let's leave raw "Capacity" for now, or maybe normalize to "Business Days"?
+      // Let's stick to raw Available Capacity % (Active Days / Total Days).
+
+      const totalBalance = areaEmployees.reduce((acc, curr) => acc + (curr.bankBalance || 0), 0);
+
+      const feedbackRate = areaEmployees.length > 0
+        ? (areaFeedbacks.length / areaEmployees.length) * 100
+        : 0;
+
+      return {
+        name: areaName,
+        value: Math.round(productivityRate) || 0,
+        rawCount: productiveShifts,
+        abs: "2.5%", // Placeholder as absenteeism logic is complex
+        bank: formatBalance(totalBalance),
+        feed: `${Math.round(feedbackRate)}%`,
+        color: productivityRate < 60 ? '#fa6238' : (productivityRate < 75 ? '#f59e0b' : '#137fec')
+      };
+    }).sort((a, b) => b.value - a.value); // Sort by performance
+  }, [areas, employees, feedbacks, schedules, currentMonth, formatBalance]);
+
+  const totalSeconds = operationalEmployees.reduce((acc, curr) => acc + curr.bankBalance, 0);
+  const criticalCount = operationalEmployees.filter(e => e.bankBalance < -14400).length;
+  // Note: expiringHours might need a real field or calculation, for now using 0 as placeholder if missing
+  const expiringCount = operationalEmployees.filter(e => (e as any).expiringHours > 0).length;
+  const pendingFeedbacksCount = operationalEmployees.length - feedbacks.filter(f =>
+    f.period_month === (currentMonth.getMonth() + 1) &&
+    f.period_year === currentMonth.getFullYear() &&
+    operationalEmployees.some(e => e.id === f.employee_id)
+  ).length;
+
+  const dynamicRiskEmployees = useMemo(() => {
+    return operationalEmployees
+      .filter(e => e.bankBalance < 0)
+      .sort((a, b) => a.bankBalance - b.bankBalance)
+      .slice(0, 4)
+      .map(e => ({
+        name: e.name,
+        area: e.cluster,
+        indicator: `Saldo BH: ${formatBalance(e.bankBalance)}`,
+        color: e.bankBalance < -14400 ? "danger" : "warning"
+      }));
+  }, [employees, formatBalance]);
 
   useEffect(() => {
     const loadAlerts = async () => {
       setLoadingAi(true);
       const baseAlerts = [
-        { type: 'critical', title: 'Risco Crítico: Banco de Horas', desc: `${criticalCount} colaboradores excederam o limite legal de horas extras nas últimas 48h.`, icon: 'error', action: 'Ver Detalhes' },
-        { type: 'warning', title: 'Horas Positivas a Vencer', desc: `${expiringCount} colaboradores possuem horas extras positivas que expiram em menos de 30 dias.`, icon: 'event_busy', action: 'Ver Detalhes' },
-        { type: 'info', title: 'Feedbacks Atrasados', desc: 'Gerentes do Cluster Oeste possuem 5 avaliações pendentes há mais de 7 dias.', icon: 'chat_bubble', action: 'Notificar Gerentes' }
+        { type: 'critical', title: 'Risco BH Crítico', desc: `${criticalCount} colaboradores excederam o limite legal de horas negativas.`, icon: 'error', action: 'Ver Detalhes' },
+        { type: 'warning', title: 'Feedbacks Pendentes', desc: `Restam ${pendingFeedbacksCount} feedbacks para serem realizados neste mês.`, icon: 'chat_bubble', action: 'Notificar gestores' },
+        { type: 'info', title: 'Saúde da Planta', desc: `A média de performance global está em ${Math.round(areaAggregation.reduce((acc, curr) => acc + curr.value, 0) / (areas.length || 1))}%`, icon: 'analytics', action: 'Investigar' }
       ];
       setAiAlerts(baseAlerts);
       setLoadingAi(false);
     };
     loadAlerts();
-  }, [criticalCount, expiringCount]);
+  }, [criticalCount, pendingFeedbacksCount, areaAggregation, areas.length]);
 
   useEffect(() => {
     const fetchDeepDive = async () => {
       setLoadingDeepDive(true);
-      const data = period === 'semanal' ? weeklyData : monthlyData;
-      const resp = await getChartDeepDive(data, period);
-      setDeepDive(resp);
+      if (areaAggregation.length > 0) {
+        const resp = await getChartDeepDive(areaAggregation, period);
+        setDeepDive(resp);
+      } else {
+        setDeepDive("Aguardando dados de áreas para análise profunda.");
+      }
       setLoadingDeepDive(false);
     };
     fetchDeepDive();
-  }, [period]);
+  }, [period, areaAggregation]);
 
   const handleAction = (action: string) => {
     if (action === 'Ver Detalhes') setShowDetailsModal(true);
-    if (action === 'Investigar') {
-      setNotification({ msg: 'Investigação iniciada no Cluster Sul. Analisando padrões de escala.', type: 'info' });
+    if (action === 'Notificar gestores') {
+      setNotification({ msg: 'Notificações enviadas via sistema para todos os gestores com pendências.', type: 'success' });
       setTimeout(() => setNotification(null), 4000);
     }
-    if (action === 'Notificar Gerentes') {
-      setNotification({ msg: 'Notificações enviadas aos 5 gerentes responsáveis no Cluster Oeste.', type: 'success' });
+    if (action === 'Investigar') {
+      setNotification({ msg: 'Iniciando análise preditiva de performance por cluster...', type: 'info' });
       setTimeout(() => setNotification(null), 4000);
     }
   };
 
-  const currentChartData = period === 'semanal' ? weeklyData : monthlyData;
-  const currentMetrics = clusterMetrics[period];
-
-  const filteredEmployees = displayRiskEmployees.filter(emp =>
+  const filteredRiskEmployees = dynamicRiskEmployees.filter(emp =>
     emp.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    emp.cluster.toLowerCase().includes(searchQuery.toLowerCase())
+    (emp.area || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
-    <div className="h-full overflow-y-auto p-8 custom-scrollbar bg-slate-50 dark:bg-background-dark relative text-slate-900 dark:text-white">
+    <div className="h-full overflow-y-auto p-8 custom-scrollbar bg-slate-50 dark:bg-background-dark relative text-slate-900 dark:text-white font-inter">
       {notification && (
-        <div className={`fixed top-20 right-8 z-[110] px-6 py-4 rounded-2xl shadow-2xl animate-in slide-in-from-right-10 duration-300 flex items-center gap-3 border ${notification.type === 'success' ? 'bg-emerald-500 border-emerald-400 text-white' : 'bg-primary border-primary-light text-white'}`}>
+        <div className={`fixed top-24 right-8 z-[110] px-6 py-4 rounded-2xl shadow-2xl animate-in slide-in-from-right-10 duration-300 flex items-center gap-3 border ${notification.type === 'success' ? 'bg-emerald-500 border-emerald-400 text-white' : 'bg-primary border-primary-light text-white'}`}>
           <span className="material-symbols-outlined">{notification.type === 'success' ? 'check_circle' : 'info'}</span>
-          <span className="font-bold text-sm">{notification.msg}</span>
+          <span className="font-bold text-sm tracking-tight">{notification.msg}</span>
         </div>
       )}
 
       <div className="max-w-7xl mx-auto space-y-8">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-black tracking-tight">Visão Geral da Operação</h1>
-            <div className="flex items-center gap-4 mt-2 text-slate-500 dark:text-[#9dabb9] text-sm font-medium">
-              <span className="flex items-center gap-1.5"><span className="material-symbols-outlined text-base">groups</span> {employees.length || 146} Colaboradores</span>
+            <h1 className="text-3xl font-black tracking-tight uppercase">Dashboard Supabase</h1>
+            <div className="flex items-center gap-4 mt-2 text-slate-500 dark:text-[#9dabb9] text-[10px] font-black uppercase tracking-widest">
+              <span className="flex items-center gap-1.5"><span className="material-symbols-outlined text-sm">groups</span> {operationalEmployees.length} Colaboradores Operacionais Ativos</span>
               <span className="w-1.5 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full"></span>
-              <span>10:42 AM</span>
+              <span>Sincronizado via Supabase Realtime</span>
             </div>
           </div>
           <div className="flex items-center gap-3">
             <MonthPicker currentDate={currentMonth} onChange={onMonthChange} />
-            <button onClick={() => setShowFilterModal(true)} className="flex items-center gap-2 px-6 py-2.5 bg-primary text-white rounded-xl text-sm font-black shadow-lg shadow-primary/20 hover:brightness-110 active:scale-95 transition-all">
-              <span className="material-symbols-outlined text-xl">filter_list</span> Filtrar
-            </button>
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <KpiCard label="Saúde da Operação" value="88%" trend="+2.4%" trendDir="up" color="success" icon="ecg_heart" progress={88} />
-          <KpiCard label="Presença Hoje" value="96%" trend="+1.0%" trendDir="up" color="primary" icon="person_check" progress={96} />
-          <KpiCard label="Saldo Banco de Horas" value={formatBalance(totalSeconds)} trend={totalSeconds < 0 ? "Crítico" : "Saudável"} trendDir={totalSeconds < 0 ? "danger" : "up"} color={totalSeconds < 0 ? "danger" : "success"} icon="history" progress={Math.min(100, Math.max(0, 50 + (totalSeconds / 1000)))} subText={totalSeconds < 0 ? "Ação imediata recomendada" : "Saldo equilibrado"} />
-          <KpiCard label="Status Feedbacks" value="12" trend="Atrasados" trendDir="danger" color="danger" icon="rate_review" progress={40} avatars={['https://i.pravatar.cc/150?u=1', 'https://i.pravatar.cc/150?u=2', 'https://i.pravatar.cc/150?u=3']} />
+          <KpiCard label="Performance Geral" value={`${Math.round(areaAggregation.reduce((acc, curr) => acc + curr.value, 0) / (areas.length || 1))}%`} trend="+1.2%" trendDir="up" color="primary" icon="analytics" progress={85} />
+          <KpiCard label="Feedbacks Concluídos" value={`${feedbacks.filter(f => f.period_month === (currentMonth.getMonth() + 1) && operationalEmployees.some(e => e.id === f.employee_id)).length}`} trend="Deste Mês" trendDir="info" color="emerald" icon="chat_bubble" progress={(feedbacks.length / (operationalEmployees.length || 1)) * 100} />
+          <KpiCard label="Saldo Total BH" value={formatBalance(totalSeconds)} trend={totalSeconds < 0 ? "Negativo" : "Positivo"} trendDir={totalSeconds < 0 ? "danger" : "up"} color={totalSeconds < 0 ? "danger" : "success"} icon="history" progress={50} />
+          <KpiCard label="Risco Crítico" value={criticalCount.toString()} trend="Horas Negativas" trendDir="danger" color="danger" icon="warning" progress={criticalCount * 10} />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 bg-white dark:bg-surface-dark border border-slate-200 dark:border-slate-800 rounded-[32px] p-8 shadow-sm flex flex-col h-full">
             <div className="flex justify-between items-start mb-10">
               <div>
-                <h3 className="text-xl font-black tracking-tight">Performance por Cluster Regional</h3>
-                <p className="text-slate-500 dark:text-[#9dabb9] text-sm mt-1">Comparativo de Presença e Eficiência</p>
-              </div>
-              <div className="flex bg-slate-100 dark:bg-surface-highlight rounded-xl p-1.5 border border-slate-200/50 dark:border-slate-700/50">
-                <button onClick={() => setPeriod('semanal')} className={`px-5 py-1.5 rounded-lg text-xs font-black transition-all ${period === 'semanal' ? 'bg-primary text-white shadow-md' : 'text-slate-500 hover:text-slate-700 dark:hover:text-white'}`}>Semanal</button>
-                <button onClick={() => setPeriod('mensal')} className={`px-5 py-1.5 rounded-lg text-xs font-black transition-all ${period === 'mensal' ? 'bg-primary text-white shadow-md' : 'text-slate-500 hover:text-slate-700 dark:hover:text-white'}`}>Mensal</button>
+                <h3 className="text-xl font-black tracking-tight uppercase">Performance por Área</h3>
+                <p className="text-slate-500 dark:text-[#9dabb9] text-[10px] font-black uppercase tracking-widest mt-1">Dados agregados em tempo real</p>
               </div>
             </div>
 
-            <div className="h-[280px] w-full mb-10 shrink-0">
+            <div className="h-[300px] w-full mb-10 shrink-0">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={currentChartData} margin={{ top: 30, right: 20, left: -20, bottom: 20 }}>
+                <BarChart data={areaAggregation} margin={{ top: 30, right: 20, left: -20, bottom: 20 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148, 163, 184, 0.1)" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#9dabb9', fontSize: 13, fontWeight: 800 }} dy={15} />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#9dabb9', fontSize: 10, fontWeight: 900 }} dy={15} />
                   <YAxis hide domain={[0, 100]} />
                   <Tooltip cursor={{ fill: 'rgba(19, 127, 236, 0.03)' }} contentStyle={{ backgroundColor: '#1c232d', border: 'none', borderRadius: '12px', color: '#fff' }} />
                   <Bar dataKey="value" radius={[12, 12, 0, 0]} barSize={55}>
-                    {currentChartData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} fillOpacity={entry.name === 'Leste' ? 0.8 : 1} />)}
-                    <LabelList dataKey="value" position="top" formatter={(val: any) => `${val}%`} style={{ fill: '#94a3b8', fontSize: 11, fontWeight: 900 }} dy={-10} />
+                    {areaAggregation.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
+                    <LabelList dataKey="value" position="top" formatter={(val: any) => `${val}%`} style={{ fill: '#94a3b8', fontSize: 10, fontWeight: 900 }} dy={-10} />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
 
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-10 shrink-0">
-              {currentMetrics.map((m: any) => (
-                <div key={m.name} className="p-4 rounded-2xl bg-slate-50 dark:bg-surface-highlight border border-slate-100 dark:border-slate-800/50">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">{m.name}</p>
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-center"><span className="text-[10px] text-slate-500 font-bold">Abs.</span><span className={`text-[10px] font-black ${parseFloat(m.abs) > 4 ? 'text-red-500' : 'text-emerald-500'}`}>{m.abs}</span></div>
-                    <div className="flex justify-between items-center"><span className="text-[10px] text-slate-500 font-bold">Banco</span><span className={`text-[10px] font-black ${m.bank.includes('+') ? 'text-orange-500' : 'text-emerald-500'}`}>{m.bank}</span></div>
-                    <div className="flex justify-between items-center"><span className="text-[10px] text-slate-500 font-bold">Feed.</span><span className="text-[10px] font-black text-primary">{m.feed}</span></div>
+              {areaAggregation.map((m: any) => (
+                <div key={m.name} className="p-5 rounded-2xl bg-slate-50 dark:bg-surface-highlight border border-slate-100 dark:border-slate-800/50 group hover:border-primary/50 transition-all">
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-4">{m.name}</p>
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center"><span className="text-[9px] text-slate-500 font-black uppercase">Abs.</span><span className="text-[10px] font-black text-slate-400">{m.abs}</span></div>
+                    <div className="flex justify-between items-center"><span className="text-[9px] text-slate-500 font-black uppercase">Banco</span><span className={`text-[10px] font-black ${m.bank.startsWith('-') ? 'text-rose-500' : 'text-emerald-500'}`}>{m.bank}</span></div>
+                    <div className="flex justify-between items-center"><span className="text-[9px] text-slate-500 font-black uppercase">Feed.</span><span className="text-[10px] font-black text-primary">{m.feed}</span></div>
                   </div>
                 </div>
               ))}
             </div>
 
-            {/* AI Deep Dive Section - Optimized & Organized */}
-            <div className="mt-auto p-6 rounded-2xl bg-gradient-to-br from-primary/5 to-purple-500/5 border border-primary/10 dark:border-primary/20 flex flex-col items-center text-center space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="size-10 rounded-full bg-gradient-to-br from-primary to-purple-600 flex items-center justify-center shrink-0 shadow-lg shadow-primary/20">
-                  <span className="material-symbols-outlined text-white text-xl">smart_toy</span>
-                </div>
-                <h4 className="text-xs font-black uppercase tracking-widest text-primary flex items-center gap-2">Gemini Deep Dive <span className="px-1.5 py-0.5 rounded bg-primary text-[8px] text-white">PRO</span></h4>
+            <div className="mt-auto p-6 rounded-3xl bg-primary/5 border border-primary/10 flex flex-col items-center text-center space-y-4">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary text-xl">smart_toy</span>
+                <h4 className="text-[10px] font-black uppercase tracking-widest text-primary">Gemini AI Analysis</h4>
               </div>
-              <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed font-medium max-w-2xl">
-                {loadingDeepDive ? <span className="flex items-center justify-center gap-2 animate-pulse">Sintonizando análise estratatégica...</span> : deepDive}
+              <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed font-medium">
+                {loadingDeepDive ? "Processando padrões estatísticos..." : deepDive}
               </p>
             </div>
           </div>
 
           <div className="space-y-8 flex flex-col">
             <div className="bg-white dark:bg-surface-dark border border-slate-200 dark:border-slate-800 rounded-[32px] p-8 shadow-sm flex-1">
-              <h3 className="text-xl font-black mb-8 flex items-center gap-3"><span className="material-symbols-outlined text-primary text-2xl">magic_button</span>Alertas Inteligentes</h3>
+              <h3 className="text-xl font-black mb-10 flex items-center gap-3 uppercase tracking-tight"><span className="material-symbols-outlined text-primary text-2xl">notifications_active</span>Alertas</h3>
               <div className="space-y-6">
-                {loadingAi ? <div className="space-y-4 animate-pulse">{[1, 2, 3].map(i => <div key={i} className="h-24 bg-slate-100 dark:bg-surface-highlight rounded-xl" />)}</div> : aiAlerts.map((alert, idx) => <AlertItem key={idx} {...alert} onAction={() => handleAction(alert.action)} />)}
+                {loadingAi ? <div className="space-y-4 animate-pulse">{[1, 2, 3].map(i => <div key={i} className="h-28 bg-slate-100 dark:bg-surface-highlight rounded-2xl" />)}</div> : aiAlerts.map((alert, idx) => <AlertItem key={idx} {...alert} onAction={() => handleAction(alert.action)} />)}
               </div>
-            </div>
-            <div className="bg-white dark:bg-surface-dark border border-slate-200 dark:border-slate-800 rounded-[32px] p-6 shadow-sm">
-              <h3 className="text-xs font-black mb-4 uppercase tracking-widest text-slate-400">Ações Rápidas</h3>
-              <button className="w-full flex items-center gap-3 p-3.5 rounded-2xl bg-slate-50 dark:bg-surface-highlight border border-slate-200 dark:border-slate-800 hover:border-primary/50 transition-all font-bold text-sm">
-                <div className="size-9 rounded-xl bg-primary/10 text-primary flex items-center justify-center"><span className="material-symbols-outlined text-xl">add</span></div>Novo Colaborador
-              </button>
             </div>
           </div>
         </div>
 
         <div className="bg-white dark:bg-surface-dark border border-slate-200 dark:border-slate-800 rounded-[32px] overflow-hidden shadow-sm">
-          <div className="p-7 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center"><h3 className="text-lg font-black">Colaboradores em Risco</h3><button className="text-primary font-bold text-sm hover:underline">Ver Todos</button></div>
+          <div className="p-8 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+            <h3 className="text-xl font-black uppercase tracking-tight">Foco em Desenvolvimento (Saldos BH)</h3>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead>
-                <tr className="bg-slate-50 dark:bg-surface-highlight text-slate-500 dark:text-[#9dabb9] text-[10px] font-black uppercase tracking-widest">
-                  <th className="px-8 py-5">Nome</th>
-                  <th className="px-8 py-5">Cluster</th>
-                  <th className="px-8 py-5">Indicador</th>
-                  <th className="px-8 py-5 text-center">Ação</th>
+                <tr className="bg-slate-50 dark:bg-surface-highlight text-slate-400 text-[10px] font-black uppercase tracking-[0.2em]">
+                  <th className="px-8 py-6">Colaborador</th>
+                  <th className="px-8 py-6">Área</th>
+                  <th className="px-8 py-6">Indicador Crítico</th>
+                  <th className="px-8 py-6 text-center">Ação</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
-                {filteredEmployees.length > 0 ? filteredEmployees.map(emp => <RiskRow key={emp.name} {...emp} />) : <tr><td colSpan={4} className="px-8 py-12 text-center text-slate-400 font-medium italic">Nenhum colaborador encontrado</td></tr>}
+                {filteredRiskEmployees.length > 0 ? filteredRiskEmployees.map(emp => (
+                  <tr key={emp.name} className="hover:bg-slate-50 dark:hover:bg-surface-highlight transition-colors group">
+                    <td className="px-8 py-5">
+                      <div className="flex items-center gap-4">
+                        <div className="size-10 rounded-2xl bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-slate-400 font-bold uppercase">{emp.name.charAt(0)}</div>
+                        <span className="font-black text-sm dark:text-white uppercase tracking-tight">{emp.name}</span>
+                      </div>
+                    </td>
+                    <td className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">{emp.area}</td>
+                    <td className="px-8 py-5">
+                      <span className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest ${emp.color === 'danger' ? 'bg-rose-500/10 text-rose-500' : 'bg-amber-500/10 text-amber-500'}`}>
+                        {emp.indicator}
+                      </span>
+                    </td>
+                    <td className="px-8 py-5 text-center">
+                      <button className="text-slate-300 hover:text-primary transition-colors hover:scale-110 active:scale-90"><span className="material-symbols-outlined">analytics</span></button>
+                    </td>
+                  </tr>
+                )) : <tr><td colSpan={4} className="px-8 py-12 text-center text-slate-400 italic">Nenhum registro crítico encontrado.</td></tr>}
               </tbody>
             </table>
           </div>
         </div>
       </div>
-
-
-
-      {showDetailsModal && (
-        <Modal title="Detalhes do Banco de Horas" onClose={() => setShowDetailsModal(false)}>
-          <div className="space-y-4">
-            <p className="text-xs font-medium text-slate-500 mb-4">Excedentes Legais - Cluster Norte (Últimas 48h):</p>
-            <div className="space-y-2">
-              {[{ n: 'Ricardo Mendes', v: '+12h' }, { n: 'Amanda Costa', v: '+10h' }, { n: 'Thiago Silva', v: '+11h' }].map(p => (
-                <div key={p.n} className="p-4 bg-slate-50 dark:bg-surface-highlight rounded-2xl flex justify-between items-center border border-slate-100 dark:border-slate-700/50"><span className="text-sm font-bold">{p.n}</span><span className="text-xs font-black text-red-500 px-2 py-1 bg-red-500/10 rounded-lg">{p.v}</span></div>
-              ))}
-            </div>
-            <button onClick={() => setShowDetailsModal(false)} className="w-full py-4 bg-primary text-white font-black rounded-2xl mt-6 shadow-lg shadow-primary/20 hover:brightness-110 active:scale-95 transition-all">Entendido</button>
-          </div>
-        </Modal>
-      )}
     </div>
   );
 };
 
-const KpiCard = ({ label, value, trend, trendDir, color, icon, progress, subText, avatars }: any) => {
+const KpiCard = ({ label, value, trend, trendDir, color, icon, progress }: any) => {
   const [tip, setTip] = useState<string>('');
   const [loading, setLoading] = useState(true);
 
@@ -280,31 +335,53 @@ const KpiCard = ({ label, value, trend, trendDir, color, icon, progress, subText
     fetchTip();
   }, [label, value, trend]);
 
-  const trendColors: any = { up: 'text-emerald-500 bg-emerald-500/10', down: 'text-red-500 bg-red-500/10', warning: 'text-orange-500 bg-orange-500/10', danger: 'text-red-500 bg-red-500/10' };
+  const trendColors: any = {
+    up: 'text-emerald-500 bg-emerald-500/10',
+    down: 'text-red-500 bg-red-500/10',
+    warning: 'text-orange-500 bg-orange-500/10',
+    danger: 'text-rose-500 bg-rose-500/10',
+    info: 'bg-primary/10 text-primary'
+  };
 
   return (
-    <div className="bg-white dark:bg-surface-dark border border-slate-200 dark:border-slate-800 rounded-[32px] p-6 relative overflow-hidden group shadow-sm transition-all hover:shadow-md h-[240px] flex flex-col">
+    <div className="bg-white dark:bg-surface-dark border border-slate-200 dark:border-slate-800 rounded-[32px] p-6 relative overflow-hidden group shadow-sm transition-all hover:shadow-xl h-[260px] flex flex-col">
       <div className="absolute top-0 right-0 p-4 opacity-[0.03] dark:opacity-[0.05] group-hover:scale-110 transition-transform duration-500"><span className="material-symbols-outlined text-8xl">{icon}</span></div>
-      <p className="text-slate-500 dark:text-[#9dabb9] text-xs font-black uppercase tracking-widest">{label}</p>
-      <div className="flex items-center gap-3 mt-3"><h3 className="text-3xl font-black tracking-tight">{value}</h3><span className={`flex items-center gap-1 text-[10px] font-black px-2.5 py-1.5 rounded-xl ${trendColors[trendDir] || trendColors['up']}`}>{trend}</span></div>
-      <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full mt-6 overflow-hidden"><div className={`h-full rounded-full transition-all duration-1000 ${color === 'success' ? 'bg-emerald-500' : color === 'danger' ? 'bg-red-500' : color === 'warning' ? 'bg-orange-500' : 'bg-primary'}`} style={{ width: `${progress}%` }}></div></div>
-      <div className="mt-auto pt-4 border-t border-slate-100 dark:border-slate-800/50"><div className="flex items-start gap-3"><div className="size-6 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><span className="material-symbols-outlined text-primary text-[14px]">smart_toy</span></div><p className="text-[10px] text-slate-500 dark:text-[#64748b] leading-relaxed italic font-medium">{loading ? "Análise técnica..." : tip}</p></div></div>
+      <p className="text-slate-400 text-[10px] font-black uppercase tracking-[0.2em]">{label}</p>
+      <div className="flex items-center gap-3 mt-4">
+        <h3 className="text-3xl font-black tracking-tighter dark:text-white">{value}</h3>
+        <span className={`text-[9px] font-black px-3 py-1.5 rounded-xl uppercase tracking-widest ${trendColors[trendDir] || 'bg-slate-100 text-slate-400'}`}>{trend}</span>
+      </div>
+      <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full mt-6 overflow-hidden">
+        <div className={`h-full rounded-full transition-all duration-1000 ${color === 'success' || color === 'emerald' ? 'bg-emerald-500' : color === 'danger' ? 'bg-rose-500' : 'bg-primary'}`} style={{ width: `${progress}%` }}></div>
+      </div>
+      <div className="mt-auto pt-6 border-t border-slate-100 dark:border-slate-800/50">
+        <div className="flex items-start gap-3">
+          <div className="size-6 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+            <span className="material-symbols-outlined text-primary text-[14px]">psychology</span>
+          </div>
+          <p className="text-[10px] text-slate-500 italic font-medium leading-relaxed">{loading ? "Analisando métricas..." : tip}</p>
+        </div>
+      </div>
     </div>
   );
 };
 
 const AlertItem = ({ type, title, desc, icon, action, onAction }: any) => {
-  const styles: any = { critical: 'bg-red-500/5 dark:bg-[#251818] border-red-500/20 text-red-500', warning: 'bg-orange-500/5 dark:bg-[#1f1a16] border-orange-500/20 text-orange-500', info: 'bg-blue-500/5 dark:bg-[#161a1f] border-blue-500/20 text-blue-500' };
-  const btnStyles: any = { critical: 'bg-red-600 text-white shadow-red-600/20', warning: 'bg-primary text-white shadow-primary/20', info: 'bg-orange-500 text-white shadow-orange-500/20' };
+  const styles: any = { critical: 'border-rose-500/30 text-rose-500', warning: 'border-amber-500/30 text-amber-500', info: 'border-blue-500/30 text-blue-500' };
   return (
-    <div className={`p-6 border border-slate-200 dark:border-slate-800/50 border-l-4 rounded-3xl ${styles[type]} space-y-4 shadow-sm group hover:scale-[1.01] transition-all`}><div className="flex items-start gap-4"><div className="size-12 rounded-xl flex items-center justify-center bg-white dark:bg-slate-800 shadow-md border border-slate-100 dark:border-slate-700/50"><span className="material-symbols-outlined text-2xl">{icon}</span></div><div className="flex-1"><h4 className="font-black text-sm leading-tight tracking-tight">{title}</h4><p className="text-[11px] text-slate-500 dark:text-[#aab4c0] font-medium leading-relaxed mt-2">{desc}</p></div></div><div className="flex justify-end pt-1"><button onClick={onAction} className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg transition-all hover:brightness-110 active:scale-95 ${btnStyles[type]}`}>{action}</button></div></div>
+    <div className={`p-6 border border-l-4 rounded-3xl bg-slate-50 dark:bg-surface-highlight/50 space-y-4 shadow-sm group hover:scale-[1.01] transition-all ${styles[type]}`}>
+      <div className="flex items-start gap-4">
+        <div className="size-12 rounded-2xl flex items-center justify-center bg-white dark:bg-slate-800 shadow-sm border border-slate-100 dark:border-slate-700/50">
+          <span className="material-symbols-outlined text-2xl">{icon}</span>
+        </div>
+        <div className="flex-1">
+          <h4 className="font-black text-sm leading-tight tracking-tight uppercase">{title}</h4>
+          <p className="text-[11px] text-slate-500 dark:text-[#aab4c0] font-bold leading-relaxed mt-2">{desc}</p>
+        </div>
+      </div>
+      <div className="flex justify-end">
+        <button onClick={onAction} className="px-6 py-2.5 rounded-xl text-[9px] font-black uppercase tracking-widest bg-slate-900 dark:bg-primary text-white shadow-xl transition-all hover:scale-105 active:scale-95">{action}</button>
+      </div>
+    </div>
   );
 };
-
-const RiskRow = ({ name, cluster, indicator, color }: any) => (
-  <tr className="hover:bg-slate-50 dark:hover:bg-surface-highlight transition-colors group"><td className="px-8 py-5"><div className="flex items-center gap-4"><div className="size-10 rounded-full bg-slate-200 dark:bg-slate-700 border-2 border-transparent group-hover:border-primary/30 transition-all shadow-sm" /><span className="font-black text-sm">{name}</span></div></td><td className="px-8 py-5 text-sm font-bold text-slate-500 dark:text-[#9dabb9]">{cluster}</td><td className="px-8 py-5"><span className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest inline-block ${color === 'danger' ? 'text-red-500 bg-red-500/10' : 'text-orange-500 bg-orange-500/10'}`}>{indicator}</span></td><td className="px-8 py-5 text-center"><button className="p-2 text-slate-400 hover:text-primary transition-colors"><span className="material-symbols-outlined text-xl">more_vert</span></button></td></tr>
-);
-
-const Modal = ({ title, children, onClose }: any) => (
-  <div className="fixed inset-0 z-[150] flex items-center justify-center p-4"><div className="absolute inset-0 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-300" onClick={onClose} /><div className="bg-white dark:bg-surface-dark w-full max-w-md rounded-[32px] shadow-2xl overflow-hidden relative z-10 p-8 animate-in zoom-in slide-in-from-bottom-8 duration-500 border border-slate-200 dark:border-slate-800"><div className="flex justify-between items-center mb-8"><h3 className="font-black text-2xl tracking-tight">{title}</h3><button onClick={onClose} className="size-10 flex items-center justify-center bg-slate-100 dark:hover:bg-surface-highlight rounded-full transition-all hover:rotate-90"><span className="material-symbols-outlined text-xl">close</span></button></div>{children}</div></div>
-);

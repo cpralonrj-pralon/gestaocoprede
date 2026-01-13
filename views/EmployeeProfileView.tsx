@@ -1,5 +1,8 @@
 
-import React from 'react';
+import React, { useRef, useState } from 'react';
+import { supabase } from '../services/supabase/client';
+import { useAuth } from '../context/AuthContext';
+import { useEmployees } from '../context/EmployeeContext';
 
 interface EmployeeProfileProps {
   employee: {
@@ -22,16 +25,84 @@ interface EmployeeProfileProps {
     sla?: string;
     productivity?: string;
     history?: any[];
+    user_id?: string;
   } | null;
+  onEdit?: (employee: any) => void;
   onClose?: () => void;
 }
 
-export const EmployeeProfileView: React.FC<EmployeeProfileProps> = ({ employee, onClose }) => {
+export const EmployeeProfileView: React.FC<EmployeeProfileProps> = ({ employee, onClose, onEdit }) => {
+  const { userProfile, refreshProfile } = useAuth();
+  const { refreshEmployees } = useEmployees();
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   if (!employee) return null;
 
   const roleLower = employee.role.toLowerCase();
   const isManagement = roleLower.includes('diretor') || roleLower.includes('coord');
   const isAnalyst = roleLower.includes('analista');
+
+  // Verifica se é o próprio usuário visualizando seu perfil
+  const isCurrentUser = userProfile?.id === employee.id;
+
+  const handleAvatarClick = () => {
+    if (isCurrentUser) {
+      fileInputRef.current?.click();
+    }
+  };
+
+  const uploadAvatar = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    try {
+      setUploading(true);
+
+      if (!event.target.files || event.target.files.length === 0) {
+        throw new Error('Você deve selecionar uma imagem para upload.');
+      }
+
+      const file = event.target.files[0];
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Math.random()}.${fileExt}`;
+      const filePath = `${employee.id}/${fileName}`;
+
+      // Upload para o bucket 'avatars'
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(filePath, file);
+
+      if (uploadError) {
+        throw uploadError;
+      }
+
+      // Obter URL pública
+      const { data: { publicUrl } } = supabase.storage
+        .from('avatars')
+        .getPublicUrl(filePath);
+
+      // Atualizar no banco de dados
+      const { error: updateError } = await supabase
+        .from('employees')
+        .update({ photo_url: publicUrl })
+        .eq('id', employee.id);
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      // Atualizar contextos
+      await refreshProfile();
+      refreshEmployees();
+
+      // Atualizar a imagem localmente (hack rápido para feedback imediato se o refresh demorar)
+      employee.img = publicUrl;
+
+      alert('Foto de perfil atualizada com sucesso!');
+    } catch (error: any) {
+      alert(`Erro ao atualizar foto: ${error.message}`);
+    } finally {
+      setUploading(false);
+    }
+  };
 
   return (
     <div className="h-full flex flex-col bg-white dark:bg-background-dark outline-none">
@@ -48,10 +119,43 @@ export const EmployeeProfileView: React.FC<EmployeeProfileProps> = ({ employee, 
       <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-8">
         {/* Main Info */}
         <div className="flex items-center gap-6">
-          <div className="relative">
-            <div className={`size-24 rounded-2xl border-4 ${employee.perf && employee.perf > 90 ? 'border-emerald-500/20' : 'border-slate-100 dark:border-slate-800'} p-1`}>
-              <img src={employee.img} className="size-full rounded-xl object-cover" alt={employee.name} />
+          <div className="relative group">
+            <div
+              className={`size-24 rounded-2xl border-4 ${employee.perf && employee.perf > 90 ? 'border-emerald-500/20' : 'border-slate-100 dark:border-slate-800'} p-1 relative overflow-hidden ${isCurrentUser ? 'cursor-pointer' : ''}`}
+              onClick={handleAvatarClick}
+            >
+              <img
+                src={employee.img || 'https://api.dicebear.com/7.x/avataaars/svg?seed=Generico'}
+                className={`size-full rounded-xl object-cover transition-opacity ${uploading ? 'opacity-50' : 'opacity-100'}`}
+                alt={employee.name}
+              />
+
+              {/* Overlay de Edição (Só para o dono do perfil) */}
+              {isCurrentUser && (
+                <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-xl">
+                  <span className="material-symbols-outlined text-white text-2xl">photo_camera</span>
+                </div>
+              )}
+
+              {/* Loading Spinner */}
+              {uploading && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="size-6 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                </div>
+              )}
             </div>
+
+            {/* Input Oculto */}
+            <input
+              type="file"
+              id="avatar_upload"
+              ref={fileInputRef}
+              accept="image/*"
+              className="hidden"
+              onChange={uploadAvatar}
+              disabled={uploading}
+            />
+
             <div className={`absolute -bottom-1 -right-1 size-5 rounded-full border-2 border-white dark:border-background-dark ${employee.perf && employee.perf > 90 ? 'bg-emerald-500' : 'bg-primary'}`}></div>
           </div>
           <div>
@@ -118,7 +222,7 @@ export const EmployeeProfileView: React.FC<EmployeeProfileProps> = ({ employee, 
         <div className="space-y-4">
           <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Dados de Registro</h3>
           <div className="space-y-3">
-            <DetailItem icon="hub" label="Cluster" value={employee.cluster || 'Geral'} />
+            <DetailItem icon="hub" label="Área" value={employee.cluster || 'Geral'} />
             <DetailItem icon="location_on" label="Endereço" value={employee.address || 'Não informado'} />
             <DetailItem icon="phone" label="Contato" value={employee.whatsapp || 'WhatsApp'} />
           </div>
@@ -145,14 +249,44 @@ export const EmployeeProfileView: React.FC<EmployeeProfileProps> = ({ employee, 
         </div>
       </div>
 
-      {/* Footer Button */}
-      {employee.whatsapp && (
-        <div className="p-6 border-t border-slate-100 dark:border-slate-800">
+      {/* Footer Buttons */}
+      <div className="p-6 border-t border-slate-100 dark:border-slate-800 space-y-3">
+        <button
+          onClick={() => onEdit?.(employee)}
+          className="w-full bg-primary hover:bg-primary-dark text-white py-3.5 rounded-2xl text-sm font-black uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg shadow-primary/20 transition-all active:scale-95"
+        >
+          <span className="material-symbols-outlined">edit</span> Editar Perfil
+        </button>
+        {employee.whatsapp && (
           <button className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 rounded-2xl text-sm font-black uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/20 transition-all active:scale-95">
             <span className="material-symbols-outlined">chat</span> Chamar no WhatsApp
           </button>
-        </div>
-      )}
+        )}
+
+        {/* Ferramenta de Admin: Resetar Senha */}
+        {userProfile && (userProfile.role.toLowerCase().includes('admin') || userProfile.role.toLowerCase().includes('coordenador')) && (
+          <button
+            onClick={async () => {
+              if (!confirm(`Tem certeza que deseja resetar a senha de ${employee.name} para 'claro123'?`)) return;
+
+              try {
+                const { data, error } = await supabase.functions.invoke('reset-user-password', {
+                  body: { targetEmployeeId: employee.id }
+                });
+
+                if (error) throw error;
+
+                alert('Senha resetada com sucesso para "claro123". O usuário deverá trocá-la no próximo login.');
+              } catch (err: any) {
+                alert('Erro ao resetar senha: ' + err.message);
+              }
+            }}
+            className="w-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 py-3.5 rounded-2xl text-sm font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all active:scale-95 border border-slate-200 dark:border-slate-700"
+          >
+            <span className="material-symbols-outlined">lock_reset</span> Resetar Senha (Admin)
+          </button>
+        )}
+      </div>
     </div>
   );
 };

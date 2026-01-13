@@ -1,7 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = 'https://qdrpxvfnuitnwbnvirtt.supabase.co';
-const supabaseAnonKey = 'sb_publishable_Gx3Zh6Jp3rB1BwkLvCzDRQ_i7Pr2VY9';
+// Usando a legacy anon key JWT que é compatível com o Supabase JS Client
+const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFkcnB4dmZudWl0bndibnZpcnR0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgxNjA1NzcsImV4cCI6MjA4MzczNjU3N30.Dq2X7hD96RIJDWIdLJK4lzOYI1zzsBGIrkAK-0uo-GM';
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
@@ -26,8 +27,15 @@ export interface Employee {
     graph_position_y?: number;
     status?: 'active' | 'inactive' | 'on_leave';
     employee_number?: string;
+    login?: string;
+    address?: string;
+    city?: string;
+    uf?: string;
+    shift?: string;
     current_hours_balance?: number;
     metadata?: any;
+    user_id?: string;
+    must_change_password?: boolean;
 }
 
 export interface Feedback {
@@ -52,10 +60,11 @@ export interface Schedule {
     updated_at: string;
     employee_id: string;
     schedule_date: string;
-    shift_type?: 'morning' | 'afternoon' | 'night' | 'off' | 'vacation' | 'dsr';
+    shift_type?: 'morning' | 'afternoon' | 'night' | 'off' | 'vacation' | 'dsr' | '08-17' | '09-18' | '10-19' | '13-22' | 'FOLGA' | 'FÉRIAS' | 'FB' | 'INSS' | 'ATESTADO' | 'AFAST';
     start_time?: string;
     end_time?: string;
     notes?: string;
+    status?: 'approved' | 'planned' | 'pending';
 }
 
 export interface Overtime {

@@ -5,17 +5,20 @@ O PeopleOps é uma plataforma inteligente voltada para a gestão de colaboradore
 ## 🚀 Funcionalidades
 
 - **Dashboard Geral**: Visualização macro de métricas de performance e presença.
-- **Hierarquia**: Gerenciamento da estrutura organizacional (Cluster, Loja, Cargo).
-- **Feedbacks & Desempenho**: Registro e consulta de avaliações e produtividade.
+- **Hierarquia Visual**: Grafo interativo da estrutura organizacional.
+- **Autenticação Segura**: Login corporativo, fluxo de primeiro acesso com troca de senha obrigatória e recuperação de senha.
+- **Gestão de Perfil**: Upload de avatar, dados pessoais e reset de senha administrativo.
+- **Feedbacks & Desempenho**: Registro e consulta de avaliações e produtividade com histórico.
 - **Insights com IA**: Análise estratégica via Google Gemini para melhoria contínua.
 - **Gestão de Escalas & Férias**: Planejamento operacional e controle de ausências.
-- **Portal do Colaborador**: Perfil detalhado com histórico de certificados e horas extras.
+- **Portal do Colaborador**: Acesso self-service a holerites, pontos e dados cadastrais.
 
 ## 🛠️ Tecnologias Utilizadas
 
 - **React 19** - Biblioteca core para interface.
 - **Vite** - Build tool e dev server.
 - **TypeScript** - Tipagem estática para robustez do código.
+- **Supabase** - Backend as a Service (Auth, Database, Storage, Edge Functions).
 - **Recharts** - Visualização de dados e gráficos.
 - **Tailwind CSS** - Estilização moderna e responsiva.
 - **Gemini AI** - Inteligência artificial para análise de dados.

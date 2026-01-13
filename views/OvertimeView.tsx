@@ -1,12 +1,14 @@
-
-import React, { useRef } from 'react';
+import React, { useRef, useState, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { useEmployees } from '../context/EmployeeContext';
+import { isOperationalRole } from '../utils/roleUtils';
 
 export const OvertimeView: React.FC = () => {
-  const { employees, rawData, importBankData, formatBalance } = useEmployees();
+  const { employees, rawData, importBankData, formatBalance, loading } = useEmployees();
+  const operationalEmployees = useMemo(() => employees.filter(e => isOperationalRole(e.role)), [employees]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [viewMode, setViewMode] = React.useState<'summary' | 'extract'>('summary');
+  const [viewMode, setViewMode] = useState<'summary' | 'extract'>('summary');
+  const [searchTerm, setSearchTerm] = useState('');
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -15,46 +17,58 @@ export const OvertimeView: React.FC = () => {
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
-        // Limpar cache antes de importar para garantir dados frescos
-        localStorage.removeItem('gestao-cop-employees');
-        localStorage.removeItem('gestao-cop-raw-bank');
-
         const dataBuffer = evt.target?.result;
         const wb = XLSX.read(dataBuffer, { type: 'array', cellDates: true, raw: false });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
-
-        // Obter o array de arrays (2D) para ter controle total sobre onde está o cabeçalho
         const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
 
         if (!data || data.length === 0) {
           alert("O arquivo parece estar vazio ou não possui dados legíveis.");
+          // Reset input para permitir reimportação
+          if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+          }
           return;
         }
 
-        importBankData(data);
-        alert(`Arquivo carregado! Analisando conteúdo...`);
+        importBankData(data as any[][]);
+        // Reset input após importação bem-sucedida
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
       } catch (err) {
         console.error("Erro na importação:", err);
         alert("Erro ao importar o arquivo. Verifique o console.");
+        // Reset input em caso de erro
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
       }
     };
     reader.readAsArrayBuffer(file);
   };
 
-  const totalPositive = employees
+  const filteredEmployees = useMemo(() => {
+    return operationalEmployees.filter(e =>
+      e.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      e.cluster.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [operationalEmployees, searchTerm]);
+
+  const totalPositive = operationalEmployees
     .filter(e => e.bankBalance > 0)
     .reduce((acc, curr) => acc + curr.bankBalance, 0);
 
-  const totalNegative = employees
+  const totalNegative = operationalEmployees
     .filter(e => e.bankBalance < 0)
     .reduce((acc, curr) => acc + curr.bankBalance, 0);
 
-  const expiringCount = employees.filter(e => e.expiringHours > 0).length;
-  const totalExpiring = employees.reduce((acc, curr) => acc + curr.expiringHours, 0);
+  const totalExpiring = operationalEmployees.reduce((acc, curr) => acc + (curr.expiringHours || 0), 0);
+  const expiringCount = operationalEmployees.filter(e => (e.expiringHours || 0) > 0).length;
 
   return (
-    <div className="h-full overflow-y-auto p-8 custom-scrollbar space-y-8 bg-slate-50 dark:bg-background-dark">
+    <div className="h-full overflow-y-auto p-4 lg:p-8 custom-scrollbar space-y-8 bg-slate-50 dark:bg-background-dark font-inter">
       <input
         type="file"
         ref={fileInputRef}
@@ -62,76 +76,86 @@ export const OvertimeView: React.FC = () => {
         accept=".xlsx, .xls, .csv"
         className="hidden"
       />
+
       <div className="max-w-7xl mx-auto space-y-8">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+          <div>
+            <h2 className="text-3xl font-black tracking-tight dark:text-white mb-2">Banco de Horas</h2>
+            <p className="text-slate-500 text-sm">Gestão centralizada de saldos e compensações via Supabase.</p>
+          </div>
+          <div className="flex gap-3">
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={loading}
+              className="bg-primary hover:bg-primary-dark text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-primary/20 transition-all font-inter disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-[20px]">cloud_upload</span>
+              {loading ? 'Processando...' : 'Importar Extrato'}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           <StatCard label="Saldo Total Positivo" value={formatBalance(totalPositive)} trend="+2.5%" trendDir="up" color="emerald" icon="trending_up" />
           <StatCard label="Saldo Total Negativo" value={formatBalance(totalNegative)} trend="-5%" trendDir="down" color="orange" icon="trending_down" />
           <StatCard
-            label="A Vencer (+)"
+            label="Créditos a Vencer"
             value={formatBalance(totalExpiring)}
             trend={`${expiringCount} pessoas`}
             trendDir={expiringCount > 0 ? "danger" : "up"}
             color="rose"
             icon="event_busy"
-            subText="Horas positivas que expiram em < 30 dias"
+            subText="Expiração em menos de 30 dias"
           />
-          <div
-            onClick={() => fileInputRef.current?.click()}
-            className="bg-white dark:bg-surface-dark rounded-2xl border-2 border-dashed border-primary/30 p-6 flex items-center justify-between group hover:border-primary/50 transition-all cursor-pointer shadow-sm"
-          >
-            <div className="space-y-2">
-              <h3 className="font-black dark:text-white">Atualizar Banco de Horas</h3>
-              <p className="text-[10px] text-slate-500">Arraste seu arquivo RH (.xlsx).</p>
-              <button className="bg-primary hover:bg-primary-dark text-white px-4 py-1.5 rounded-lg text-[10px] font-bold transition-all shadow-lg shadow-primary/20 mt-1">Importar Arquivo</button>
-            </div>
-            <div className="size-12 rounded-full bg-primary/10 flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
-              <span className="material-symbols-outlined text-2xl">cloud_upload</span>
-            </div>
-          </div>
         </div>
 
-        <EvolutionChart data={employees} rawData={rawData} />
-
-        <div className="bg-white dark:bg-surface-dark border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
-          <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-4">
-            <div className="flex gap-4">
+        <div className="bg-white dark:bg-surface-dark border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden flex flex-col">
+          <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-6 bg-slate-50/50 dark:bg-background-dark/30">
+            <div className="flex gap-6">
               <button
                 onClick={() => setViewMode('summary')}
-                className={`text-lg font-bold border-b-2 transition-all pb-1 ${viewMode === 'summary' ? 'border-primary text-primary' : 'border-transparent text-slate-400'}`}
+                className={`text-sm font-black uppercase tracking-widest border-b-2 transition-all pb-2 ${viewMode === 'summary' ? 'border-primary text-primary' : 'border-transparent text-slate-400'}`}
               >
-                Resumo por Colaborador
+                Resumo Colaboradores
               </button>
               <button
                 onClick={() => setViewMode('extract')}
-                className={`text-lg font-bold border-b-2 transition-all pb-1 ${viewMode === 'extract' ? 'border-primary text-primary' : 'border-transparent text-slate-400'}`}
+                className={`text-sm font-black uppercase tracking-widest border-b-2 transition-all pb-2 ${viewMode === 'extract' ? 'border-primary text-primary' : 'border-transparent text-slate-400'}`}
               >
-                Extrato RH (Importado)
+                Extrato Bruto
               </button>
             </div>
-            <div className="flex gap-2">
-              <button className="px-4 py-2 text-xs font-bold rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2"><span className="material-symbols-outlined text-[18px]">filter_list</span> Filtrar</button>
-              <button className="px-4 py-2 text-xs font-bold rounded-lg bg-primary text-white flex items-center gap-2"><span className="material-symbols-outlined text-[18px]">download</span> Exportar</button>
+
+            <div className="flex-1 max-w-md relative">
+              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
+              <input
+                type="text"
+                placeholder="Buscar por nome ou cluster..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-background-dark dark:text-white text-sm focus:ring-2 focus:ring-primary/50 outline-none transition-all"
+              />
             </div>
           </div>
+
           <div className="overflow-x-auto">
             {viewMode === 'summary' ? (
               <table className="w-full text-left">
-                <thead className="bg-slate-50 dark:bg-background-dark/50 text-[10px] font-black uppercase tracking-widest text-slate-500 border-b border-slate-200 dark:border-slate-800">
+                <thead className="text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100 dark:border-slate-800">
                   <tr>
                     <th className="px-6 py-4">Colaborador</th>
-                    <th className="px-6 py-4">Segmento / Cluster</th>
-                    <th className="px-6 py-4">Coordenador</th>
-                    <th className="px-6 py-4 text-right">Saldo de Horas</th>
+                    <th className="px-6 py-4">Cluster</th>
+                    <th className="px-6 py-4 text-right">Saldo Atual</th>
                     <th className="px-6 py-4 text-center">Status</th>
                     <th className="px-6 py-4 text-right">Ação</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-sm">
-                  {employees.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="px-6 py-12 text-center text-slate-400 italic">Nenhum dado importado ainda. Importe o arquivo do RH para começar.</td>
-                    </tr>
-                  ) : employees.map(emp => (
+                <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50 text-sm">
+                  {loading && operationalEmployees.length === 0 ? (
+                    <tr><td colSpan={5} className="px-6 py-12 text-center animate-pulse text-slate-400 font-bold uppercase tracking-widest">Carregando dados do Supabase...</td></tr>
+                  ) : filteredEmployees.length === 0 ? (
+                    <tr><td colSpan={5} className="px-6 py-12 text-center text-slate-400 italic">Nenhum registro encontrado.</td></tr>
+                  ) : filteredEmployees.map(emp => (
                     <OvertimeRow
                       key={emp.id}
                       id={emp.id}
@@ -139,39 +163,32 @@ export const OvertimeView: React.FC = () => {
                       cluster={emp.cluster}
                       coordinator={emp.coordinator}
                       value={formatBalance(emp.bankBalance)}
-                      status={emp.bankBalance < -14400 ? 'critical' : emp.bankBalance > 7200 ? 'warning' : 'healthy'}
+                      status={emp.bankBalance < -14400 * 3600 ? 'critical' : emp.bankBalance > 7200 * 3600 ? 'warning' : 'healthy'}
                     />
                   ))}
                 </tbody>
               </table>
             ) : (
               <table className="w-full text-left">
-                <thead className="bg-slate-50 dark:bg-background-dark/50 text-[10px] font-black uppercase tracking-widest text-slate-500 border-b border-slate-200 dark:border-slate-800">
+                <thead className="text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100 dark:border-slate-800">
                   <tr>
                     <th className="px-6 py-4">Matrícula</th>
                     <th className="px-6 py-4">Nome</th>
                     <th className="px-6 py-4">Descrição</th>
-                    <th className="px-6 py-4 text-right">Saldo/Valor</th>
+                    <th className="px-6 py-4 text-right">Valor</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+                <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50 text-xs">
                   {rawData.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="px-6 py-12 text-center text-slate-400 italic">Nenhum dado bruto encontrado.</td>
-                    </tr>
-                  ) : rawData.slice(0, 100).map((row, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                      <td className="px-6 py-3 font-mono">{String(row['MATRÍCULA'] || row['MATRICULA'] || '-')}</td>
-                      <td className="px-6 py-3 font-bold">{String(row['NOME'] || '-')}</td>
-                      <td className="px-6 py-3 text-slate-500">{String(row['DESCRIÇÃO'] || row['DESCRICAO'] || '-')}</td>
-                      <td className="px-6 py-3 text-right font-black">{String(row['SALDO'] || '-')}</td>
+                    <tr><td colSpan={4} className="px-6 py-12 text-center text-slate-400 italic font-medium">Nenhum dado bruto importado recentemente.</td></tr>
+                  ) : rawData.slice(0, 50).map((row, idx) => (
+                    <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+                      <td className="px-6 py-3 font-mono opacity-60">#{row['MATRICULA'] || row['ID'] || '-'}</td>
+                      <td className="px-6 py-3 font-bold dark:text-white uppercase">{row['NOME'] || '-'}</td>
+                      <td className="px-6 py-3 text-slate-500 italic">{row['DESCRICAO'] || row['HISTORICO'] || '-'}</td>
+                      <td className="px-6 py-3 text-right font-black dark:text-white">{row['SALDO'] || row['VALOR'] || '-'}</td>
                     </tr>
                   ))}
-                  {rawData.length > 100 && (
-                    <tr>
-                      <td colSpan={4} className="px-6 py-3 text-center text-slate-400 text-[10px] font-black uppercase tracking-widest">Exibindo primeiras 100 linhas de {rawData.length}</td>
-                    </tr>
-                  )}
                 </tbody>
               </table>
             )}
@@ -182,148 +199,71 @@ export const OvertimeView: React.FC = () => {
   );
 };
 
-const EvolutionChart = ({ data, rawData }: any) => {
-  // Mock data for months that don't have data yet to fulfill the "WOW" requirement
-  const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun'];
-
-  // Real calculation for current month (assume last month of the list is current)
-  const currentPos = data.filter((e: any) => e.bankBalance > 0).reduce((acc: number, curr: any) => acc + curr.bankBalance, 0) / 3600;
-  const currentNeg = Math.abs(data.filter((e: any) => e.bankBalance < 0).reduce((acc: number, curr: any) => acc + curr.bankBalance, 0) / 3600);
-
-  // Generate some realistic-looking evolution data if we only have 1 month
-  const chartData = [
-    { month: 'Jan', pos: 120, neg: 45 },
-    { month: 'Fev', pos: 150, neg: 30 },
-    { month: 'Mar', pos: 110, neg: 60 },
-    { month: 'Abr', pos: 140, neg: 80 },
-    { month: 'Mai', pos: 160, neg: 25 },
-    { month: 'Jun', pos: currentPos || 180, neg: currentNeg || 50 }
-  ];
-
-  const maxVal = Math.max(...chartData.map(d => Math.max(d.pos, d.neg))) * 1.2;
-
+const StatCard = ({ label, value, trend, trendDir, color, icon, subText }: any) => {
+  const colorStyles: any = {
+    emerald: 'text-emerald-500 bg-emerald-500/10',
+    rose: 'text-rose-500 bg-rose-500/10',
+    orange: 'text-orange-500 bg-orange-500/10',
+  };
   return (
-    <div className="bg-white dark:bg-surface-dark border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm">
-      <div className="flex justify-between items-center mb-10">
-        <div>
-          <h3 className="font-black dark:text-white">Evolução do Saldo (6 meses)</h3>
-          <p className="text-[10px] text-slate-500 uppercase tracking-widest font-black">Comparativo Mensal de Horas Positivas vs Negativas</p>
+    <div className="bg-white dark:bg-surface-dark border border-slate-200 dark:border-slate-800 rounded-2xl p-6 space-y-4 shadow-sm relative overflow-hidden group hover:shadow-lg transition-all">
+      <div className="flex justify-between items-start">
+        <div className="space-y-1">
+          <p className="text-slate-400 text-[10px] font-black uppercase tracking-[0.2em]">{label}</p>
+          <h3 className="text-3xl font-black dark:text-white tabular-nums tracking-tighter">{value.replace('h', '')}<span className="text-sm opacity-40 ml-1">H</span></h3>
         </div>
-        <div className="flex gap-4">
-          <div className="flex items-center gap-2">
-            <div className="size-2 rounded-full bg-primary"></div>
-            <span className="text-[10px] font-black uppercase text-slate-500">Positivo</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="size-2 rounded-full bg-rose-500"></div>
-            <span className="text-[10px] font-black uppercase text-slate-500">Negativo</span>
-          </div>
+        <div className={`p-3 rounded-2xl ${colorStyles[color]}`}>
+          <span className="material-symbols-outlined text-2xl">{icon}</span>
         </div>
       </div>
-
-      <div className="h-64 flex items-center justify-between gap-4 px-4 relative">
-        {/* Zero baseline */}
-        <div className="absolute left-0 right-0 h-px bg-slate-200 dark:bg-slate-800 top-1/2 -translate-y-1/2"></div>
-
-        {chartData.map((d, i) => (
-          <div key={i} className="flex-1 flex flex-col items-center group relative h-full">
-            {/* Top Half (Positive) */}
-            <div className="flex-1 w-full flex items-end justify-center pb-[0.5px]">
-              <div
-                className="w-8 sm:w-12 bg-primary rounded-t-md hover:brightness-110 transition-all cursor-pointer relative"
-                style={{ height: `${(d.pos / maxVal) * 100}%` }}
-              >
-                <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[9px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none font-bold whitespace-nowrap z-10">
-                  +{Math.round(d.pos)}h
-                </div>
-              </div>
-            </div>
-            {/* Bottom Half (Negative) */}
-            <div className="flex-1 w-full flex items-start justify-center pt-[0.5px]">
-              <div
-                className="w-8 sm:w-12 bg-rose-500 rounded-b-md hover:brightness-110 transition-all cursor-pointer relative"
-                style={{ height: `${(d.neg / maxVal) * 100}%` }}
-              >
-                <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[9px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none font-bold whitespace-nowrap z-10">
-                  -{Math.round(d.neg)}h
-                </div>
-              </div>
-            </div>
-            {/* Label */}
-            <span className="absolute -bottom-8 text-[10px] font-black text-slate-400 uppercase">{d.month}</span>
-          </div>
-        ))}
+      <div className="flex items-center gap-2">
+        <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${trendDir === 'up' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
+          {trend}
+        </span>
+        {subText && <p className="text-[10px] text-slate-500 font-medium italic">{subText}</p>}
       </div>
-      <div className="h-8"></div> {/* Spacer for absolute labels */}
+      <div className="absolute top-0 right-0 p-4 opacity-[0.03] group-hover:opacity-[0.07] transition-opacity pointer-events-none">
+        <span className="material-symbols-outlined text-8xl">{icon}</span>
+      </div>
     </div>
   );
 };
 
-const StatCard = ({ label, value, trend, trendDir, color, icon, subText }: any) => (
-  <div className="bg-white dark:bg-surface-dark border border-slate-200 dark:border-slate-800 rounded-2xl p-6 space-y-4 shadow-sm relative overflow-hidden group">
-    <div className="flex justify-between items-start">
-      <div className="space-y-1">
-        <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest">{label}</p>
-        <h3 className="text-2xl font-black dark:text-white">{value}</h3>
-      </div>
-      <div className={`p-2 rounded-xl ${color === 'emerald' ? 'bg-emerald-500/10 text-emerald-500' : color === 'rose' ? 'bg-rose-500/10 text-rose-500' : 'bg-orange-500/10 text-orange-500'}`}>
-        <span className="material-symbols-outlined">{icon || 'analytics'}</span>
-      </div>
-    </div>
-    <div className="flex items-center gap-2">
-      <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${trendDir === 'up' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
-        {trend}
-      </span>
-      {subText && <p className="text-[10px] text-slate-400 font-medium italic">{subText}</p>}
-    </div>
-    <div className="w-full bg-slate-100 dark:bg-slate-800 h-1 rounded-full overflow-hidden">
-      <div className={`h-full transition-all duration-1000 ${color === 'emerald' ? 'bg-emerald-500' : color === 'rose' ? 'bg-rose-500' : 'bg-orange-500'}`} style={{ width: '70%' }}></div>
-    </div>
-  </div>
-);
-
-const OvertimeRow = ({ id, name, cluster, coordinator, value, status }: any) => {
+const OvertimeRow = ({ id, name, cluster, value, status }: any) => {
   const statusMap: any = {
-    critical: { label: 'Risco Alto', style: 'bg-red-500/10 text-red-500 border-red-500/20' },
-    warning: { label: 'Excesso', style: 'bg-orange-500/10 text-orange-500 border-orange-500/20' },
+    critical: { label: 'Risco Crítico', style: 'bg-red-500/10 text-red-500 border-red-500/20' },
+    warning: { label: 'Alerta', style: 'bg-orange-500/10 text-orange-500 border-orange-500/20' },
     healthy: { label: 'Regular', style: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' },
-    neutral: { label: 'Zerado', style: 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700' },
   };
 
   return (
-    <tr className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-100 dark:border-slate-800/50">
-      <td className="px-6 py-4">
+    <tr className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+      <td className="px-6 py-5">
         <div className="flex items-center gap-3">
-          <div className="size-9 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-slate-400 font-bold overflow-hidden">
-            <span className="material-symbols-outlined text-xl">person</span>
+          <div className="size-10 rounded-full bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-700 flex items-center justify-center text-slate-400 font-bold border border-slate-200 dark:border-slate-600">
+            <span className="material-symbols-outlined text-xl">account_circle</span>
           </div>
           <div>
-            <p className="font-bold dark:text-white text-sm">{name}</p>
-            <p className="text-[10px] text-slate-500 uppercase tracking-widest font-black">ID: #{id}</p>
+            <p className="font-black dark:text-white text-sm uppercase tracking-tight">{name}</p>
+            <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">ID: #{id.slice(0, 8)}</p>
           </div>
         </div>
       </td>
-      <td className="px-6 py-4">
-        <div>
-          <p className="text-slate-500 text-xs font-medium">{cluster}</p>
-          <p className="text-[9px] text-slate-400 uppercase font-black">Segmento / Cluster</p>
-        </div>
+      <td className="px-6 py-5">
+        <span className="text-slate-500 text-xs font-bold uppercase tracking-tighter">{cluster}</span>
       </td>
-      <td className="px-6 py-4">
-        <p className="text-slate-500 text-xs font-medium">{coordinator}</p>
-      </td>
-      <td className={`px-6 py-4 text-right font-black ${value.startsWith('-') ? 'text-red-500' : value.startsWith('+') ? 'text-emerald-500' : 'text-slate-400'}`}>
+      <td className={`px-6 py-5 text-right font-black text-lg tabular-nums ${value.startsWith('-') ? 'text-red-500' : 'text-emerald-500'}`}>
         {value}
       </td>
-      <td className="px-6 py-4">
+      <td className="px-6 py-5">
         <div className="flex justify-center">
-          <span className={`px-3 py-1 rounded-full text-[10px] font-black border uppercase tracking-widest ${statusMap[status]?.style || statusMap.neutral.style}`}>
-            {statusMap[status]?.label || statusMap.neutral.label}
+          <span className={`px-3 py-1 rounded-full text-[10px] font-black border uppercase tracking-[0.1em] ${statusMap[status]?.style || ''}`}>
+            {statusMap[status]?.label}
           </span>
         </div>
       </td>
-      <td className="px-6 py-4 text-right">
-        <button className="text-slate-400 hover:text-primary transition-colors"><span className="material-symbols-outlined">more_vert</span></button>
+      <td className="px-6 py-5 text-right">
+        <button className="text-slate-300 hover:text-primary transition-colors hover:scale-110 active:scale-90"><span className="material-symbols-outlined">analytics</span></button>
       </td>
     </tr>
   );

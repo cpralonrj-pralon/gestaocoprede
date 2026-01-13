@@ -13,13 +13,12 @@ type ImportStep = 'upload' | 'mapping' | 'preview' | 'importing';
 const SYSTEM_FIELDS = [
     { key: 'nome', label: 'Nome *', required: true },
     { key: 'cargo', label: 'Cargo *', required: true },
-    { key: 'cluster', label: 'Cluster', required: false },
-    { key: 'loja', label: 'Loja', required: false },
+    { key: 'cluster', label: 'Área', required: false },
+    { key: 'login', label: 'Login', required: false },
     { key: 'gestor', label: 'Gestor', required: false },
     { key: 'email', label: 'Email', required: false },
     { key: 'telefone', label: 'Telefone', required: false },
     { key: 'dataAdmissao', label: 'Data Admissão', required: false },
-    { key: 'salario', label: 'Salário', required: false },
 ];
 
 export const CSVImportModal: React.FC<CSVImportModalProps> = ({
@@ -211,7 +210,7 @@ export const CSVImportModal: React.FC<CSVImportModalProps> = ({
                                         <ul className="text-xs text-blue-700 dark:text-blue-300 space-y-1 mb-4">
                                             <li>• <strong>Nome</strong> (obrigatório)</li>
                                             <li>• <strong>Cargo</strong> (obrigatório)</li>
-                                            <li>• Cluster, Loja, Gestor, Email, Telefone, Data Admissão, Salário (opcionais)</li>
+                                            <li>• Área, Login, Gestor, Email, Telefone, Data Admissão (opcionais)</li>
                                         </ul>
                                         <button
                                             onClick={downloadCSVTemplate}

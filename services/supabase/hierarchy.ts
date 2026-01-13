@@ -1,16 +1,41 @@
 import { supabase, HierarchyConnection } from './client';
 
+const SUPABASE_URL = 'https://qdrpxvfnuitnwbnvirtt.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFkcnB4dmZudWl0bndibnZpcnR0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgxNjA1NzcsImV4cCI6MjA4MzczNjU3N30.Dq2X7hD96RIJDWIdLJK4lzOYI1zzsBGIrkAK-0uo-GM';
+
 /**
- * Get all hierarchy connections
+ * Get all hierarchy connections - usa fetch direto para evitar AbortError
  */
 export async function getAllConnections(): Promise<HierarchyConnection[]> {
+    // Tentar fetch direto primeiro
+    try {
+        const url = `${SUPABASE_URL}/rest/v1/hierarchy_connections?select=*`;
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            console.log(`[getAllConnections] Carregadas ${data.length} conexões via fetch direto`);
+            return data;
+        }
+    } catch (directError) {
+        console.log('[getAllConnections] Fetch direto falhou, tentando via cliente...');
+    }
+
+    // Fallback para cliente Supabase
     const { data, error } = await supabase
         .from('hierarchy_connections')
         .select('*');
 
     if (error) {
         console.error('Error fetching connections:', error);
-        throw error;
+        return [];
     }
 
     return data || [];

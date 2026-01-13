@@ -21,25 +21,19 @@ export interface EmployeeCSVData {
     nome: string;
     cargo: string;
     cluster?: string;
-    loja?: string;
+    login?: string;
     gestor?: string;
     email?: string;
     telefone?: string;
     dataAdmissao?: string;
-    salario?: string;
 }
 
 const VALID_ROLES = [
-    'Diretor de Operações',
-    'Coord. II',
-    'Coordenador II',
-    'Coord. I',
-    'Coordenador I',
-    'Analista II',
-    'Analista I',
-    'Técnico Senior',
-    'Técnico',
-    'Instalador'
+    'COORDENADOR COP REDE I',
+    'COORDENADOR COP REDE II',
+    'ANALISTA COP REDE I',
+    'ANALISTA COP REDE II',
+    'GERENTE TECNICO'
 ];
 
 /**
@@ -118,14 +112,6 @@ function isValidDate(date: string): boolean {
     return dateObj.getDate() === day && dateObj.getMonth() === month - 1;
 }
 
-/**
- * Validates salary format
- */
-function isValidSalary(salary: string): boolean {
-    if (!salary) return true; // Optional field
-    const salaryRegex = /^\d+([.,]\d{1,2})?$/;
-    return salaryRegex.test(salary.replace(/\./g, '').replace(',', '.'));
-}
 
 /**
  * Normalizes role name to match system roles
@@ -142,19 +128,13 @@ function normalizeRole(role: string): string {
     const match = VALID_ROLES.find(r => r.toLowerCase() === normalized.toLowerCase());
     if (match) return match;
 
-    // Try partial matches
-    if (normalized.toLowerCase().includes('coord') && normalized.toLowerCase().includes('ii')) {
-        return 'Coord. II';
-    }
-    if (normalized.toLowerCase().includes('coord') && normalized.toLowerCase().includes('i')) {
-        return 'Coord. I';
-    }
-    if (normalized.toLowerCase().includes('analista') && normalized.toLowerCase().includes('ii')) {
-        return 'Analista II';
-    }
-    if (normalized.toLowerCase().includes('analista') && normalized.toLowerCase().includes('i')) {
-        return 'Analista I';
-    }
+    // Try partial matches for convenience
+    const lower = normalized.toLowerCase();
+    if (lower.includes('coord') && lower.includes('rede') && lower.includes('ii')) return 'COORDENADOR COP REDE II';
+    if (lower.includes('coord') && lower.includes('rede') && lower.includes('i')) return 'COORDENADOR COP REDE I';
+    if (lower.includes('analista') && lower.includes('rede') && lower.includes('ii')) return 'ANALISTA COP REDE II';
+    if (lower.includes('analista') && lower.includes('rede') && lower.includes('i')) return 'ANALISTA COP REDE I';
+    if (lower.includes('gerente') && lower.includes('tecnico')) return 'GERENTE TECNICO';
 
     return normalized; // Return as-is if no match
 }
@@ -236,14 +216,6 @@ export function validateEmployeeData(
         });
     }
 
-    if (data.salario && !isValidSalary(data.salario)) {
-        errors.push({
-            row: rowIndex,
-            field: 'salario',
-            value: data.salario,
-            message: 'Salário inválido. Use formato: 0000.00'
-        });
-    }
 
     // Validate manager exists (if provided)
     if (data.gestor && data.gestor.trim() !== '') {
@@ -290,10 +262,10 @@ export function readFileAsText(file: File): Promise<string> {
  * Generates example CSV template
  */
 export function generateCSVTemplate(): string {
-    const headers = ['Nome', 'Cargo', 'Cluster', 'Loja', 'Gestor', 'Email', 'Telefone', 'Data Admissão', 'Salário'];
+    const headers = ['Nome', 'Cargo', 'Área', 'Login', 'Gestor', 'Email', 'Telefone', 'Data Admissão'];
     const example = [
-        'João Silva,Analista I,Norte,Loja 01,Ana Souza,joao@email.com,(11) 99999-9999,01/01/2024,3500.00',
-        'Maria Santos,Coord. I,Sul,Loja 05,Pedro Santos,maria@email.com,(11) 98888-8888,15/02/2024,5500.00'
+        'João Silva,Analista I,EMPRESARIAL,joaosilva,Ana Souza,joao@email.com,(11) 99999-9999,01/01/2024',
+        'Maria Santos,Coord. I,RESIDENCIAL FIBRA GPON,mariasantos,Pedro Santos,maria@email.com,(11) 98888-8888,15/02/2024'
     ];
 
     return [headers.join(','), ...example].join('\n');

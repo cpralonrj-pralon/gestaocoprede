@@ -1,4 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { getAllEmployees, subscribeToEmployees } from '../services/supabase/employees';
+import { Employee as SupabaseEmployee } from '../services/supabase/client';
+import { importHoursBank, HoursBankImportRow } from '../services/supabase/hoursBank';
 
 export interface Employee {
     id: string;
@@ -6,9 +9,11 @@ export interface Employee {
     cluster: string;
     coordinator: string;
     bankBalance: number; // In seconds
-    expiringHours: number; // In seconds, if positive and near expiry
+    role: string;
+    expiringHours: number; // In seconds
     daysToExpire: number; // Number of days until expiry
     lastUpdate: string;
+    employee_number?: string;
 }
 
 interface EmployeeContextType {
@@ -17,24 +22,84 @@ interface EmployeeContextType {
     updateEmployees: (newEmployees: Employee[]) => void;
     importBankData: (data: any[]) => void;
     formatBalance: (seconds: number) => string;
+    loading: boolean;
 }
 
 const EmployeeContext = createContext<EmployeeContextType | undefined>(undefined);
 
 export const EmployeeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [employees, setEmployees] = useState<Employee[]>([]);
-    const [rawData, setRawData] = useState<any[]>([]);
+    // Recuperar dados brutos do localStorage ao inicializar
+    const [rawData, setRawData] = useState<any[]>(() => {
+        try {
+            const stored = localStorage.getItem('gestao-cop-raw-bank');
+            return stored ? JSON.parse(stored) : [];
+        } catch (error) {
+            console.error('Error loading rawData from localStorage:', error);
+            return [];
+        }
+    });
+    const [loading, setLoading] = useState(true);
+
+    const mapSupabaseToLocal = (emp: SupabaseEmployee): Employee => ({
+        id: emp.id,
+        name: emp.full_name,
+        cluster: emp.cluster || 'Matriz',
+        coordinator: emp.manager_id || 'Não Atribuído',
+        role: emp.role,
+        bankBalance: emp.current_hours_balance || 0,
+        expiringHours: 0,
+        daysToExpire: 999,
+        lastUpdate: emp.updated_at || '',
+        employee_number: emp.employee_number
+    });
+
+    const refreshEmployees = async (isMounted: { current: boolean } = { current: true }) => {
+        try {
+            const data = await getAllEmployees();
+
+            // Safety check: specific fix for the "disappearing data" bug
+            if (data.length === 0 && employees.length > 5) {
+                console.warn(" [EmployeeContext] Recebeu 0 colaboradores enquanto tinha dados carregados. Ignorando possível falha de sync.");
+                return;
+            }
+
+            if (isMounted.current) {
+                setEmployees(data.map(mapSupabaseToLocal));
+            }
+        } catch (error: any) {
+            // Ignorar AbortError (comum no React dev mode)
+            if (error?.name !== 'AbortError' && !error?.message?.includes('abort')) {
+                console.error('Error refreshing employees:', error);
+            }
+        } finally {
+            if (isMounted.current) {
+                setLoading(false);
+            }
+        }
+    };
 
     useEffect(() => {
-        const saved = localStorage.getItem('gestao-cop-employees');
-        const savedRaw = localStorage.getItem('gestao-cop-raw-bank');
-        if (saved) setEmployees(JSON.parse(saved));
-        if (savedRaw) setRawData(JSON.parse(savedRaw));
+        const isMounted = { current: true };
+
+        refreshEmployees(isMounted);
+
+        const subscription = subscribeToEmployees(() => {
+            if (isMounted.current) {
+                refreshEmployees(isMounted);
+            }
+        });
+
+        return () => {
+            isMounted.current = false;
+            if (subscription && typeof subscription.unsubscribe === 'function') {
+                subscription.unsubscribe();
+            }
+        };
     }, []);
 
     const updateEmployees = (newEmployees: Employee[]) => {
         setEmployees(newEmployees);
-        localStorage.setItem('gestao-cop-employees', JSON.stringify(newEmployees));
     };
 
     const updateRawData = (data: any[]) => {
@@ -43,39 +108,18 @@ export const EmployeeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
 
     const timeToSeconds = (val: any): number => {
-        // Se for vazio ou inválido, retorna 0
         if (!val) return 0;
-
-        // Converter para string e limpar
         const str = String(val).trim();
-
-        // Se for string no formato HH:MM:SS ou HH:MM
         if (str.includes(':')) {
             const parts = str.split(':').map(p => parseInt(p) || 0);
-
-            if (parts.length >= 3) {
-                // HH:MM:SS
-                return parts[0] * 3600 + parts[1] * 60 + parts[2];
-            } else if (parts.length === 2) {
-                // HH:MM
-                return parts[0] * 3600 + parts[1] * 60;
-            }
+            if (parts.length >= 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+            else if (parts.length === 2) return parts[0] * 3600 + parts[1] * 60;
         }
-
-        // Se for número
         if (typeof val === 'number') {
-            // Se for muito pequeno (< 1), é fração de dia do Excel
-            if (val < 1) {
-                return Math.round(val * 86400);
-            }
-            // Se for entre 1 e 100, são horas
-            if (val < 100) {
-                return Math.round(val * 3600);
-            }
-            // Caso contrário, já são segundos
+            if (val < 1) return Math.round(val * 86400);
+            if (val < 100) return Math.round(val * 3600);
             return Math.round(val);
         }
-
         return 0;
     };
 
@@ -88,46 +132,30 @@ export const EmployeeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         return `${sign}${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}h`;
     };
 
-    const importBankData = (rawData2D: any[][]) => {
+    const importBankData = async (rawData2D: any[][]) => {
         console.log(" [EmployeeContext] Iniciando processamento de", rawData2D.length, "linhas (2D).");
 
-        if (rawData2D.length === 0) {
-            console.warn(" [EmployeeContext] O arquivo parece estar vazio.");
-            return;
-        }
+        if (rawData2D.length === 0) return;
 
-        // 1. Encontrar a linha do cabeçalho
         let headerRowIndex = -1;
-        let colIndices = {
-            matricula: -1,
-            nome: -1,
-            desc: -1,
-            saldo: -1,
-            gestor: -1,
-            venc: -1
-        };
-
+        let colIndices = { matricula: -1, nome: -1, desc: -1, saldo: -1, gestor: -1, venc: -1, horas_prev: -1, horas_trab: -1 };
         const keywords = {
             matricula: ['MATRICULA', 'ID', 'CODIGO'],
             nome: ['NOME', 'COLABORADOR', 'FUNCIONARIO'],
             desc: ['DESCRICAO', 'TIPO', 'HISTORICO'],
             saldo: ['SALDO', 'HORAS', 'VALOR'],
+            horas_prev: ['PREVISTA', 'ESPERADA'],
+            horas_trab: ['TRABALHADA', 'REALIZADA'],
             gestor: ['GESTOR', 'SUPERVISOR', 'CLUSTER'],
             venc: ['VENCER', 'EXPIRA', 'VENC_DIAS', 'VENCIMENTO']
         };
 
-        // Procura nas primeiras 20 linhas
         for (let i = 0; i < Math.min(rawData2D.length, 20); i++) {
             const row = rawData2D[i];
             if (!Array.isArray(row)) continue;
-
-            const normalizedRow = row.map(cell =>
-                String(cell || '').toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim()
-            );
-
+            const normalizedRow = row.map(cell => String(cell || '').toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim());
             const foundMatricula = normalizedRow.findIndex(cell => keywords.matricula.some(kw => cell.includes(kw)));
             const foundSaldo = normalizedRow.findIndex(cell => keywords.saldo.some(kw => cell.includes(kw)));
-
             if (foundMatricula !== -1 && foundSaldo !== -1) {
                 headerRowIndex = i;
                 colIndices.matricula = foundMatricula;
@@ -136,50 +164,28 @@ export const EmployeeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 colIndices.desc = normalizedRow.findIndex(cell => keywords.desc.some(kw => cell.includes(kw)));
                 colIndices.gestor = normalizedRow.findIndex(cell => keywords.gestor.some(kw => cell.includes(kw)));
                 colIndices.venc = normalizedRow.findIndex(cell => keywords.venc.some(kw => cell.includes(kw)));
+                colIndices.horas_prev = normalizedRow.findIndex(cell => keywords.horas_prev.some(kw => cell.includes(kw)));
+                colIndices.horas_trab = normalizedRow.findIndex(cell => keywords.horas_trab.some(kw => cell.includes(kw)));
                 break;
             }
         }
 
         if (headerRowIndex === -1) {
-            console.error(" [EmployeeContext] Cabeçalho não encontrado.");
-            alert("Erro: Não consegui localizar as colunas de 'Matrícula' e 'Saldo'. \n\nVerifique se o arquivo tem os nomes corretos no topo da tabela.");
+            alert("Erro: Não consegui localizar as colunas de 'Matrícula' e 'Saldo'.");
             return;
         }
 
-        console.log(" [EmployeeContext] Cabeçalho encontrado na linha", headerRowIndex, colIndices);
-
-        const aggregatedBalances: Record<string, { name: string; cluster: string; coordinator: string; balance: number; expiring: number; days: number }> = {};
-        const parsedRows: any[] = [];
+        const importRows: HoursBankImportRow[] = [];
         const headerRow = rawData2D[headerRowIndex];
+        const parsedRows: any[] = [];
 
-        let processedCount = 0;
-        let skippedCount = 0;
-
-        // 2. Processar dados a partir da linha após o cabeçalho
         for (let i = headerRowIndex + 1; i < rawData2D.length; i++) {
             const row = rawData2D[i];
-            if (!Array.isArray(row) || row.length === 0) {
-                skippedCount++;
-                continue;
-            }
+            if (!Array.isArray(row) || row.length === 0) continue;
 
             const matricula = String(row[colIndices.matricula] || '').trim();
-            const nome = String(row[colIndices.nome] || 'Sem Nome');
-            const descricao = String(row[colIndices.desc] || '').toUpperCase();
-            const coordinator = String(row[colIndices.gestor] || 'Não Atribuído');
-            const cluster = String(row[colIndices.gestor] || 'Matriz'); // Note: The user reference shows "Logística", "Vendas", etc. usually this is a mix of Segment/Guestor
-            const saldoVal = row[colIndices.saldo];
-            const diasVenc = parseInt(row[colIndices.venc]) || 999;
+            if (!matricula) continue;
 
-            if (!matricula || matricula === 'null' || matricula === '') {
-                console.log(`  [LINHA ${i}] IGNORADA - Matrícula vazia ou inválida`);
-                skippedCount++;
-                continue;
-            }
-
-            processedCount++;
-
-            // Converter para objeto para o Extrato RH ser compatível
             const rowObj: any = {};
             headerRow.forEach((h, idx) => {
                 const key = String(h || `COL_${idx}`).toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
@@ -187,68 +193,42 @@ export const EmployeeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             });
             parsedRows.push(rowObj);
 
-            if (!aggregatedBalances[matricula]) {
-                aggregatedBalances[matricula] = {
-                    name: nome,
-                    cluster: cluster,
-                    coordinator: coordinator,
-                    balance: 0,
-                    expiring: 0,
-                    days: 999
-                };
-            }
+            // Mapping for Supabase
+            const workedHours = timeToSeconds(row[colIndices.horas_trab]) / 3600 || 0;
+            const expectedHours = timeToSeconds(row[colIndices.horas_prev]) / 3600 || 0;
+            const saldoHours = timeToSeconds(row[colIndices.saldo]) / 3600 || 0;
 
-            const seconds = timeToSeconds(saldoVal);
+            // Se não tiver colunas de prevista/trabalhada, usa o saldo direto
+            const finalWorked = workedHours || (saldoHours > 0 ? saldoHours : 0);
+            const finalExpected = expectedHours || (saldoHours < 0 ? Math.abs(saldoHours) : 0);
 
-            // Verificar se é crédito ou débito baseado na descrição
-            const isCredit = descricao.includes('CREDITO');
-            const isDebit = descricao.includes('DEBITO');
-
-            // Somar se for crédito, subtrair se for débito
-            if (isCredit) {
-                aggregatedBalances[matricula].balance += seconds;
-            } else if (isDebit) {
-                aggregatedBalances[matricula].balance -= seconds;
-            } else {
-                // Se não tem nem CREDITO nem DEBITO, somar por padrão
-                aggregatedBalances[matricula].balance += seconds;
-            }
-
-            // Verificar se está próximo de vencer (para alertas) - apenas para créditos positivos
-            if (isCredit && diasVenc < 20 && seconds > 0) {
-                aggregatedBalances[matricula].expiring += seconds;
-                aggregatedBalances[matricula].days = Math.min(aggregatedBalances[matricula].days, diasVenc);
-            }
+            importRows.push({
+                employeeIdentifier: matricula,
+                name: String(row[colIndices.nome] || ''),
+                date: new Date().toISOString().split('T')[0], // Simplified
+                workedHours: workedHours || saldoHours,
+                expectedHours: expectedHours || 0,
+                notes: `Importação via planilha: ${String(row[colIndices.desc] || '')}`
+            });
         }
 
-        console.log(` [EmployeeContext] ===== ESTATÍSTICAS DE PROCESSAMENTO =====`);
-        console.log(`  Total de linhas no arquivo: ${rawData2D.length}`);
-        console.log(`  Linhas processadas: ${processedCount}`);
-        console.log(`  Linhas ignoradas: ${skippedCount}`);
-        console.log(` [EmployeeContext] ===== RESUMO FINAL POR MATRÍCULA =====`);
-        Object.entries(aggregatedBalances).forEach(([matricula, data]) => {
-            const balanceHours = (data.balance / 3600).toFixed(2);
-            console.log(`  ${matricula} - ${data.name}: ${balanceHours}h (${data.balance}s)`);
-        });
-
-        const newEmployees: Employee[] = Object.entries(aggregatedBalances).map(([id, data]) => ({
-            id,
-            name: data.name,
-            cluster: data.cluster,
-            coordinator: data.coordinator,
-            bankBalance: data.balance,
-            expiringHours: data.expiring,
-            daysToExpire: data.days,
-            lastUpdate: new Date().toISOString()
-        }));
-
-        console.log(" [EmployeeContext] Processamento concluído.", newEmployees.length, "colaboradores únicos.");
         updateRawData(parsedRows);
-        updateEmployees(newEmployees);
+
+        try {
+            setLoading(true);
+            const result = await importHoursBank(importRows, "upload_manual.xlsx");
+            alert(`Sincronização concluída! ${result.success} registros processados com sucesso. ${result.errors.length} erros.`);
+            refreshEmployees();
+        } catch (error) {
+            console.error("Erro na sincronização com Supabase:", error);
+            alert("Erro ao sincronizar com o banco de dados.");
+        } finally {
+            setLoading(false);
+        }
     };
 
     return (
-        <EmployeeContext.Provider value={{ employees, rawData, updateEmployees, importBankData, formatBalance }}>
+        <EmployeeContext.Provider value={{ employees, rawData, updateEmployees, importBankData, formatBalance, loading }}>
             {children}
         </EmployeeContext.Provider>
     );
