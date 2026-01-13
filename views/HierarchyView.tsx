@@ -3,8 +3,6 @@ import {
   ReactFlow,
   Background,
   Controls,
-  useNodesState,
-  useEdgesState,
   addEdge,
   Connection,
   Edge,
@@ -95,7 +93,8 @@ const CustomEdge = ({
 
 
 
-// Custom Node Component
+
+// Custom Node Component - Restored Premium Design
 const CustomNode = ({ data }: { data: any }) => (
   <div className={`p-4 rounded-[2rem] shadow-2xl border-2 bg-white dark:bg-surface-dark min-w-[220px] relative transition-all hover:scale-105 active:scale-95 group overflow-hidden ${data.color === 'primary' ? 'border-primary' : (data.color === 'emerald' ? 'border-emerald-500' : 'border-orange-400')}`}>
     <div className={`absolute top-0 right-0 p-4 opacity-[0.03] group-hover:opacity-[0.08] transition-opacity`}>
@@ -133,7 +132,7 @@ const CustomNode = ({ data }: { data: any }) => (
           <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-black">{data.stats.total}</span>
         </div>
         <div className="space-y-1">
-          {Object.entries(data.stats.roles).map(([role, count]: [any, any]) => (
+          {data.stats?.roles && Object.entries(data.stats.roles).map(([role, count]: [any, any]) => (
             <div key={role} className="flex justify-between items-center text-[8px] font-bold text-slate-500 uppercase">
               <span className="truncate max-w-[140px]">{role}</span>
               <span className="text-slate-400">({count})</span>
@@ -152,8 +151,39 @@ const nodeTypes = { custom: CustomNode };
 const edgeTypes = { custom: CustomEdge };
 
 export const HierarchyView = () => {
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes] = useState<Node[]>([]);
+  const [edges, setEdges] = useState<Edge[]>([]);
+
+  // Manual handlers for React Flow
+  const onNodesChange = useCallback((changes: any) => {
+    setNodes((nds) => {
+      const updatedNodes = [...nds];
+      changes.forEach((change: any) => {
+        if (change.type === 'position' && change.position) {
+          const node = updatedNodes.find(n => n.id === change.id);
+          if (node) node.position = change.position;
+        }
+        if (change.type === 'remove') {
+          const index = updatedNodes.findIndex(n => n.id === change.id);
+          if (index > -1) updatedNodes.splice(index, 1);
+        }
+      });
+      return updatedNodes;
+    });
+  }, []);
+
+  const onEdgesChange = useCallback((changes: any) => {
+    setEdges((eds) => {
+      const updatedEdges = [...eds];
+      changes.forEach((change: any) => {
+        if (change.type === 'remove') {
+          const index = updatedEdges.findIndex(e => e.id === change.id);
+          if (index > -1) updatedEdges.splice(index, 1);
+        }
+      });
+      return updatedEdges;
+    });
+  }, []);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isCSVModalOpen, setIsCSVModalOpen] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<any>(null);
@@ -162,13 +192,29 @@ export const HierarchyView = () => {
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [notification, setNotification] = useState<{ msg: string; type: 'success' | 'info' } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [reactFlowKey, setReactFlowKey] = useState(0);
+  const [allEmployees, setAllEmployees] = useState<any[]>([]); // Store all employees for managers dropdown
 
   const refreshData = useCallback(async () => {
     try {
+      console.log('🔄 [HierarchyView] Carregando dados...');
       const [allEmployees, allConnections] = await Promise.all([
         getAllEmployees(),
         getAllConnections()
       ]);
+
+      console.log('📊 [HierarchyView] Dados carregados:', {
+        employees: allEmployees.length,
+        connections: allConnections.length
+      });
+
+      // Store all employees for managers dropdown
+      setAllEmployees(allEmployees);
+
+      if (allEmployees.length === 0) {
+        console.warn('⚠️ [HierarchyView] Nenhum colaborador encontrado!');
+      }
 
       const childrenMap: Record<string, string[]> = {};
       const empMap: Record<string, any> = {};
@@ -179,52 +225,65 @@ export const HierarchyView = () => {
       });
 
       const statsMap: Record<string, { total: number, roles: Record<string, number> }> = {};
-      const calculateStats = (id: string) => {
+      const calculateStats = (id: string, visited: Set<string> = new Set()) => {
         if (statsMap[id]) return statsMap[id];
+        if (visited.has(id)) return { total: 0, roles: {} }; // Cycle detected
+
+        visited.add(id);
         const res = { total: 0, roles: {} as Record<string, number> };
         const childIds = childrenMap[id] || [];
+
         childIds.forEach(cId => {
           const cEmp = empMap[cId];
           if (cEmp) {
             res.total += 1;
             res.roles[cEmp.role] = (res.roles[cEmp.role] || 0) + 1;
-            const sub = calculateStats(cId);
+
+            // Create a new set for the branch traversal
+            const sub = calculateStats(cId, new Set(visited));
             res.total += sub.total;
             Object.entries(sub.roles).forEach(([r, count]) => {
               res.roles[r] = (res.roles[r] || 0) + count;
             });
           }
         });
+
         statsMap[id] = res;
         return res;
       };
+
       allEmployees.forEach(e => calculateStats(e.id));
 
-      const newNodes: Node[] = allEmployees.map((emp) => ({
-        id: emp.id,
-        type: 'custom',
-        position: { x: emp.graph_position_x || Math.random() * 800, y: emp.graph_position_y || Math.random() * 400 },
-        data: {
-          name: emp.full_name,
-          role: emp.role,
-          img: emp.photo_url || `https://picsum.photos/seed/${emp.id}/100/100`,
-          color: emp.hierarchy_level === 'root' ? 'primary' : (emp.hierarchy_level === 'c2' ? 'emerald' : 'orange'),
-          perf: emp.performance_score || 100,
-          level: emp.hierarchy_level || 'team',
-          stats: statsMap[emp.id],
+      const newNodes: Node[] = allEmployees
+        .filter(emp => emp.id && emp.full_name) // Only include valid employees
+        .map((emp, index) => ({
           id: emp.id,
-          employee_number: emp.employee_number,
-          login: (emp as any).login,
-          email: emp.email,
-          whatsapp: emp.phone,
-          address: (emp as any).address,
-          city: (emp as any).city,
-          uf: (emp as any).uf,
-          admission_date: emp.admission_date,
-          shift: (emp as any).shift,
-          managerId: (emp as any).manager_id
-        }
-      }));
+          type: 'custom',
+          position: {
+            x: emp.graph_position_x || (index % 10) * 200,
+            y: emp.graph_position_y || Math.floor(index / 10) * 150
+          },
+          data: {
+            name: emp.full_name || 'Sem nome',
+            role: emp.role || 'Colaborador',
+            img: emp.photo_url || `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect fill="#137fec" width="100" height="100"/><text fill="white" font-size="40" font-family="Arial" x="50%" y="50%" text-anchor="middle" dy=".3em">${(emp.full_name || 'U').charAt(0).toUpperCase()}</text></svg>`)}`,
+            color: emp.hierarchy_level === 'root' ? 'primary' : (emp.hierarchy_level === 'c2' ? 'emerald' : 'orange'),
+            perf: emp.performance_score || 100,
+            level: emp.hierarchy_level || 'team',
+            stats: statsMap[emp.id] || { total: 0, roles: {} },
+            id: emp.id,
+            employee_number: emp.employee_number,
+            login: (emp as any).login,
+            email: emp.email,
+            whatsapp: emp.phone,
+            address: (emp as any).address,
+            city: (emp as any).city,
+            uf: (emp as any).uf,
+            admission_date: emp.admission_date,
+            shift: (emp as any).shift,
+            managerId: (emp as any).manager_id
+          }
+        }));
 
       const handleDeleteEdgeLocal = (id: string) => setConfirmDeleteId(id);
 
@@ -238,16 +297,32 @@ export const HierarchyView = () => {
         data: { onDelete: handleDeleteEdgeLocal }
       }));
 
+      console.log('📍 [HierarchyView] Criando nodes e edges:', {
+        nodes: newNodes.length,
+        edges: newEdges.length
+      });
+
+      // Apply directly without setTimeout
+      console.log('⏰ [HierarchyView] Aplicando', newNodes.length, 'nodes DIRETAMENTE');
+      setReactFlowKey(prev => prev + 1); // Force React Flow to remount
       setNodes(newNodes);
       setEdges(newEdges);
+      setIsLoading(false);
+      console.log('✅ [HierarchyView] Chamou setIsLoading(false), reactFlowKey incrementado');
     } catch (error) {
       console.error('Error fetching hierarchy data:', error);
+      setIsLoading(false);
     }
   }, [setNodes, setEdges]);
 
   useEffect(() => {
     refreshData();
   }, [refreshData]);
+
+  // Debug: Monitor nodes state
+  useEffect(() => {
+    console.log('🔴 [HierarchyView RENDER] nodes.length =', nodes.length, 'isLoading =', isLoading);
+  }, [nodes, isLoading]);
 
   const handleAddEmployee = async (data: any) => {
     try {
@@ -510,24 +585,32 @@ export const HierarchyView = () => {
           </div>
         </div>
 
-        <div className="flex-1 bg-grid-pattern cursor-crosshair">
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onNodeClick={onNodeClick}
-            onNodeDragStop={onNodeDragStop}
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            zoomOnScroll={true}
-            panOnScroll={false}
-            fitView
-          >
-            <Background color="#94a3b8" opacity={0.1} />
-            <Controls className="!bg-white dark:!bg-surface-dark !border-none !shadow-2xl" />
-          </ReactFlow>
+        <div className="flex-1 bg-grid-pattern cursor-crosshair relative" style={{ minHeight: '600px' }}>
+          {/* Show ReactFlow always - if no nodes, it will just be empty */}
+          <div style={{ width: '100%', height: '600px' }}>
+            <ReactFlow
+              key={reactFlowKey}
+              nodes={nodes}
+              edges={edges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onNodeClick={onNodeClick}
+              onNodeDragStop={onNodeDragStop}
+              onEdgeDoubleClick={(e, edge) => setConfirmDeleteId(edge.id)}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              nodesDraggable={true}
+              nodesConnectable={true}
+              elementsSelectable={true}
+              zoomOnScroll={true}
+              panOnScroll={true}
+              fitView
+            >
+              <Background color="#94a3b8" opacity={0.1} />
+              <Controls className="!bg-white dark:!bg-surface-dark !border-none !shadow-2xl" />
+            </ReactFlow>
+          </div>
         </div>
       </div>
 
@@ -558,9 +641,10 @@ export const HierarchyView = () => {
           setEditingEmployee(null);
         }}
         onSave={handleAddEmployee}
-        managers={nodes
-          .filter(n => n.data.role?.includes('COORDENADOR') || n.data.role?.includes('GERENTE'))
-          .map(n => ({ id: n.id, name: n.data.name }))}
+        managers={allEmployees.map(emp => ({
+          id: emp.id,
+          name: emp.full_name || emp.name || 'Sem Nome'
+        }))}
         editData={editingEmployee}
       />
       <CSVImportModal

@@ -10,12 +10,13 @@ export async function getAllEmployees(): Promise<Employee[]> {
     // Tentar fetch direto primeiro
     try {
         const directResult = await getAllEmployeesDirect();
+        console.log(`[getAllEmployees] ✅ Fetch direto retornou ${directResult?.length || 0} employees`);
         if (directResult && directResult.length > 0) {
-            console.log(`[getAllEmployees] Carregados ${directResult.length} employees via fetch direto`);
+            console.log('[getAllEmployees] 📤 Retornando', directResult.length, 'employees');
             return directResult;
         }
     } catch (directError) {
-        console.log('[getAllEmployees] Fetch direto falhou, tentando via cliente...');
+        console.log('[getAllEmployees] ❌ Fetch direto falhou:', directError);
     }
 
     // Fallback para cliente Supabase

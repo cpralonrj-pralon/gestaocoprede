@@ -14,7 +14,7 @@ interface Props {
 }
 
 export const DashboardView: React.FC<Props> = ({ currentMonth, onMonthChange, searchQuery = '' }) => {
-  const { employees, formatBalance, loading: loadingEmployees } = useEmployees();
+  const { employees, formatBalance, refreshEmployees, loading: loadingEmployees } = useEmployees();
   const [feedbacks, setFeedbacks] = useState<any[]>([]);
   const [schedules, setSchedules] = useState<any[]>([]);
   const [loadingFeedbacks, setLoadingFeedbacks] = useState(true);
@@ -47,6 +47,13 @@ export const DashboardView: React.FC<Props> = ({ currentMonth, onMonthChange, se
     const fetchSchedules = async () => {
       setLoadingSchedules(true);
       try {
+        // Validate currentMonth is a valid Date
+        if (!currentMonth || !(currentMonth instanceof Date) || isNaN(currentMonth.getTime())) {
+          console.warn('Invalid currentMonth:', currentMonth);
+          setLoadingSchedules(false);
+          return;
+        }
+
         const startOfMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1).toISOString();
         const endOfMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0).toISOString();
         const data = await getSchedulesByRange(startOfMonth, endOfMonth);
@@ -66,7 +73,8 @@ export const DashboardView: React.FC<Props> = ({ currentMonth, onMonthChange, se
   const areaAggregation = useMemo(() => {
     const month = currentMonth.getMonth() + 1;
     const year = currentMonth.getFullYear();
-    const daysInMonth = new Date(year, month, 0).getDate();
+    const today = new Date();
+    const isCurrentMonth = today.getMonth() === currentMonth.getMonth() && today.getFullYear() === currentMonth.getFullYear();
 
     return areas.map(areaName => {
       const areaEmployees = operationalEmployees.filter(e => e.cluster === areaName);
@@ -78,65 +86,99 @@ export const DashboardView: React.FC<Props> = ({ currentMonth, onMonthChange, se
         areaEmployeeIds.has(f.employee_id)
       );
 
-      const areaSchedules = schedules.filter(s => areaEmployeeIds.has(s.employee_id));
+      // For today's performance, filter schedules for today only
+      // Create local date string YYYY-MM-DD to match database format
+      const today = new Date();
+      const yearStr = today.getFullYear();
+      const monthStr = String(today.getMonth() + 1).padStart(2, '0');
+      const dayStr = String(today.getDate()).padStart(2, '0');
+      const todayLocalStr = `${yearStr}-${monthStr}-${dayStr}`;
 
-      // CLT Art. 473 - Justified Absences
-      // Ensure specific types are matched correctly
-      const justifiedTypes = ['INSS', 'ATESTADO', 'AFAST', 'LICENÇA', 'DOAÇÃO', 'LUTO', 'CASAMENTO', 'FALTA JUSTIFICADA'];
-      const unjustifiedTypes = ['FALTA', 'FALTA INJUSTIFICADA', 'SUSPENSÃO', 'FALTA NÃO JUSTIFICADA'];
-      const offTypes = ['FOLGA', 'DSR', 'FÉRIAS', 'VACATION', 'FB'];
+      const todaySchedules = isCurrentMonth
+        ? schedules.filter(s => {
+          if (!areaEmployeeIds.has(s.employee_id)) return false;
+          if (!s.schedule_date) return false;
 
-      let productiveCount = 0;
-      let unjustifiedCount = 0;
-      let justifiedCount = 0;
+          // Compare strings directly (assuming YYYY-MM-DD format from DB)
+          // Also handle simplified Date objects or ISO strings
+          let sDateStr = '';
+          if (typeof s.schedule_date === 'string') {
+            sDateStr = s.schedule_date.split('T')[0];
+          } else if (s.schedule_date instanceof Date) {
+            const y = s.schedule_date.getFullYear();
+            const m = String(s.schedule_date.getMonth() + 1).padStart(2, '0');
+            const d = String(s.schedule_date.getDate()).padStart(2, '0');
+            sDateStr = `${y}-${m}-${d}`;
+          }
 
-      areaSchedules.forEach(s => {
-        const type = (s.shift_type || '').toUpperCase().trim();
-        if (!type || offTypes.includes(type)) return; // Ignored (Scheduled Off or Empty)
+          return sDateStr === todayLocalStr;
+        })
+        : [];
 
-        if (justifiedTypes.includes(type)) {
-          justifiedCount++;
-          return;
+      if (isCurrentMonth && areaName === areas[0]) {
+        console.log(`🔍 [Dashboard] Area: ${areaName} | Hoje: ${todayLocalStr} | Total Escalas Filtradas: ${todaySchedules.length}`);
+        if (todaySchedules.length === 0 && schedules.length > 0) {
+          console.log('   Exemplo de escala:', schedules[0].schedule_date);
         }
-        if (unjustifiedTypes.includes(type)) {
-          unjustifiedCount++;
-          return;
+      }
+
+      const offTypes = ['FOLGA', 'DSR', 'FÉRIAS', 'VACATION', 'FB', 'FALTA', 'FALTA INJUSTIFICADA', 'FALTA JUSTIFICADA', 'SUSPENSÃO', 'INSS', 'ATESTADO', 'AFAST'];
+
+      let workingToday = 0;
+      let offToday = 0;
+
+      // Iterate over ALL employees in the area to account for those without schedules
+      areaEmployees.forEach(emp => {
+        const schedule = todaySchedules.find(s => s.employee_id === emp.id);
+
+        if (schedule) {
+          const type = (schedule.shift_type || '').toUpperCase().trim();
+          if (offTypes.includes(type)) {
+            offToday++;
+          } else {
+            workingToday++;
+          }
+        } else if (isCurrentMonth) {
+          // Default "No Schedule" for today -> Assume Working (Standard Shift)
+          workingToday++;
         }
-        productiveCount++; // Default to productive/worked if not absent/off
       });
 
-      const totalWorkableDays = productiveCount + unjustifiedCount + justifiedCount;
+      // Always base denominator on total headcount of the area
+      const totalToday = areaEmployees.length;
 
-      // Absenteeism Rate
-      const absenteeismRate = totalWorkableDays > 0
-        ? (unjustifiedCount / totalWorkableDays) * 100
+      const workPercentage = totalToday > 0
+        ? (workingToday / totalToday) * 100
         : 0;
 
-      // Presence / Productivity Rate
-      const productivityRate = totalWorkableDays > 0
-        ? (productiveCount / totalWorkableDays) * 100
-        : 0; // If no workable days, productivity is 0 (or N/A)
+      // Debug: Removed
 
-      const totalBalance = areaEmployees.reduce((acc, curr) => acc + (curr.bankBalance || 0), 0);
+      const totalBalance = areaEmployees.reduce((acc, curr) => acc + (curr.current_hours_balance || 0), 0);
       const feedbackRate = areaEmployees.length > 0
         ? (areaFeedbacks.length / areaEmployees.length) * 100
         : 0;
 
       return {
         name: areaName,
-        value: Math.round(productivityRate) || 0,
-        rawCount: productiveCount,
-        totalWorkable: totalWorkableDays,
-        abs: `${absenteeismRate.toFixed(1)}%`,
+        value: Math.round(workPercentage),
+        trabalhando: Math.round(workPercentage), // Blue bar
+        folga: Math.round(100 - workPercentage), // Red bar
+        hasSchedules: todaySchedules.length > 0,
+        employeeCount: areaEmployees.length,
+        workingCount: workingToday,
+        offCount: offToday,
+        rawCount: totalToday,
+        totalWorkable: totalToday,
+        abs: totalToday > 0 ? `${((offToday / totalToday) * 100).toFixed(1)}%` : '0.0%',
         bank: formatBalance(totalBalance),
         feed: `${Math.round(feedbackRate)}%`,
-        color: productivityRate < 60 ? '#fa6238' : (productivityRate < 90 ? '#f59e0b' : '#137fec')
+        color: workPercentage < 60 ? '#fa6238' : (workPercentage < 90 ? '#f59e0b' : '#10b981')
       };
-    }).sort((a, b) => b.value - a.value); // Sort by performance
+    }).sort((a, b) => b.value - a.value);
   }, [areas, employees, feedbacks, schedules, currentMonth, formatBalance]);
 
-  const totalSeconds = operationalEmployees.reduce((acc, curr) => acc + curr.bankBalance, 0);
-  const criticalCount = operationalEmployees.filter(e => e.bankBalance < -14400).length;
+  const totalSeconds = operationalEmployees.reduce((acc, curr) => acc + (curr.current_hours_balance || 0), 0);
+  const criticalCount = operationalEmployees.filter(e => (e.current_hours_balance || 0) < -14400).length;
   // Note: expiringHours might need a real field or calculation, for now using 0 as placeholder if missing
   const expiringCount = operationalEmployees.filter(e => (e as any).expiringHours > 0).length;
   const pendingFeedbacksCount = operationalEmployees.length - feedbacks.filter(f =>
@@ -147,16 +189,16 @@ export const DashboardView: React.FC<Props> = ({ currentMonth, onMonthChange, se
 
   const dynamicRiskEmployees = useMemo(() => {
     return operationalEmployees
-      .filter(e => e.bankBalance < 0)
-      .sort((a, b) => a.bankBalance - b.bankBalance)
+      .filter(e => (e.current_hours_balance || 0) < 0)
+      .sort((a, b) => (a.current_hours_balance || 0) - (b.current_hours_balance || 0))
       .slice(0, 4)
       .map(e => ({
         name: e.name,
         area: e.cluster,
-        indicator: `Saldo BH: ${formatBalance(e.bankBalance)}`,
-        color: e.bankBalance < -14400 ? "danger" : "warning"
+        indicator: `Saldo BH: ${formatBalance(e.current_hours_balance || 0)}`,
+        color: (e.current_hours_balance || 0) < -14400 ? "danger" : "warning"
       }));
-  }, [employees, formatBalance]);
+  }, [operationalEmployees, formatBalance]);
 
   useEffect(() => {
     const loadAlerts = async () => {
@@ -233,13 +275,25 @@ export const DashboardView: React.FC<Props> = ({ currentMonth, onMonthChange, se
             </div>
           </div>
           <div className="flex items-center gap-3">
+            <button
+              onClick={async () => {
+                setNotification({ msg: 'Sincronizando dados do banco...', type: 'info' });
+                await refreshEmployees();
+                setTimeout(() => setNotification({ msg: 'Dados atualizados!', type: 'success' }), 500);
+                setTimeout(() => setNotification(null), 3000);
+              }}
+              className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-primary hover:text-white transition-all flex items-center gap-2 text-sm font-black uppercase tracking-widest"
+            >
+              <span className="material-symbols-outlined text-lg">sync</span>
+              Atualizar
+            </button>
             <MonthPicker currentDate={currentMonth} onChange={onMonthChange} />
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <KpiCard label="Performance Geral" value={`${Math.round(areaAggregation.reduce((acc, curr) => acc + curr.rawCount, 0) / (areaAggregation.reduce((acc, curr) => acc + curr.totalWorkable, 0) || 1) * 100)}%`} trend="+1.2%" trendDir="up" color="primary" icon="analytics" progress={85} />
-          <KpiCard label="Feedbacks Concluídos" value={`${feedbacks.filter(f => f.period_month === (currentMonth.getMonth() + 1) && operationalEmployees.some(e => e.id === f.employee_id)).length}`} trend="Deste Mês" trendDir="info" color="emerald" icon="chat_bubble" progress={(feedbacks.length / (operationalEmployees.length || 1)) * 100} />
+          <KpiCard label="Performance Geral" value={`${Math.round(areaAggregation.reduce((acc, curr) => acc + (curr.workingCount || 0), 0) / (areaAggregation.reduce((acc, curr) => acc + (curr.employeeCount || 0), 0) || 1) * 100)}%`} trend="Média Global" trendDir="up" color="primary" icon="analytics" progress={85} />
+          <KpiCard label="Feedbacks Concluídos" value={`${feedbacks.filter(f => f.period_month === (currentMonth.getMonth() + 1) && f.period_year === currentMonth.getFullYear() && operationalEmployees.some(e => e.id === f.employee_id)).length}`} trend="Deste Mês" trendDir="info" color="emerald" icon="chat_bubble" progress={(feedbacks.length / (operationalEmployees.length || 1)) * 100} />
           <KpiCard label="Saldo Total BH" value={formatBalance(totalSeconds)} trend={totalSeconds < 0 ? "Negativo" : "Positivo"} trendDir={totalSeconds < 0 ? "danger" : "up"} color={totalSeconds < 0 ? "danger" : "success"} icon="history" progress={50} />
           <KpiCard label="Risco Crítico" value={criticalCount.toString()} trend="Horas Negativas" trendDir="danger" color="danger" icon="warning" progress={criticalCount * 10} />
         </div>
@@ -249,20 +303,107 @@ export const DashboardView: React.FC<Props> = ({ currentMonth, onMonthChange, se
             <div className="flex justify-between items-start mb-10">
               <div>
                 <h3 className="text-xl font-black tracking-tight uppercase">Performance por Área</h3>
-                <p className="text-slate-500 dark:text-[#9dabb9] text-[10px] font-black uppercase tracking-widest mt-1">Dados agregados em tempo real</p>
+                <p className="text-slate-500 dark:text-[#9dabb9] text-[10px] font-black uppercase tracking-widest mt-1">
+                  % de colaboradores trabalhando hoje
+                </p>
               </div>
             </div>
 
+
+
             <div className="h-[300px] w-full mb-10 shrink-0">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={areaAggregation} margin={{ top: 30, right: 20, left: -20, bottom: 20 }}>
+                <BarChart data={areaAggregation} margin={{ top: 30, right: 20, left: -20, bottom: 60 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148, 163, 184, 0.1)" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#9dabb9', fontSize: 10, fontWeight: 900 }} dy={15} />
+                  <XAxis
+                    dataKey="name"
+                    axisLine={false}
+                    tickLine={false}
+                    interval={0}
+                    tick={(props: any) => {
+                      const { x, y, payload } = props;
+                      const name = payload.value || '';
+
+                      // IMPROVED TEXT WRAPPING LOGIC (FORCE SPLIT ON SLASH)
+                      const words = name.replace(/\//g, '/ ').split(' ');
+                      const lines: string[] = [];
+                      let currentLine = '';
+
+                      words.forEach((word: string) => {
+                        const testLine = currentLine ? `${currentLine} ${word}` : word;
+                        // Stricter wrapping for long area names
+                        if (testLine.length > 10 && currentLine) {
+                          lines.push(currentLine);
+                          currentLine = word;
+                        } else {
+                          currentLine = testLine;
+                        }
+                      });
+                      if (currentLine) lines.push(currentLine);
+
+                      return (
+                        <g transform={`translate(${x},${y})`}>
+                          {lines.map((line, index) => (
+                            <text
+                              key={index}
+                              x={0}
+                              y={index * 12 + 15}
+                              fill="#9dabb9"
+                              fontSize={8}
+                              fontWeight={800}
+                              textAnchor="middle"
+                            >
+                              {line}
+                            </text>
+                          ))}
+                        </g>
+                      );
+                    }}
+                  />
                   <YAxis hide domain={[0, 100]} />
-                  <Tooltip cursor={{ fill: 'rgba(19, 127, 236, 0.03)' }} contentStyle={{ backgroundColor: '#1c232d', border: 'none', borderRadius: '12px', color: '#fff' }} />
-                  <Bar dataKey="value" radius={[12, 12, 0, 0]} barSize={55}>
-                    {areaAggregation.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
-                    <LabelList dataKey="value" position="top" formatter={(val: any) => `${val}%`} style={{ fill: '#94a3b8', fontSize: 10, fontWeight: 900 }} dy={-10} />
+                  <Tooltip
+                    cursor={{ fill: 'rgba(19, 127, 236, 0.03)' }}
+                    contentStyle={{ backgroundColor: '#1c232d', border: 'none', borderRadius: '12px', color: '#fff' }}
+                    formatter={(value: any, name: string) => [`${value}%`, name === 'trabalhando' ? 'Trabalhando' : 'Folga']}
+                  />
+
+                  {/* Bar for "Trabalhando" (Blue) */}
+                  <Bar dataKey="trabalhando" stackId="a" fill="#137fec" radius={[0, 0, 12, 12]} barSize={55} />
+
+                  {/* Bar for "Folga" (Red) */}
+                  <Bar dataKey="folga" stackId="a" fill="#ef4444" radius={[12, 12, 0, 0]} barSize={55}>
+                    <LabelList
+                      dataKey="folga"
+                      position="top"
+                      content={(props: any) => {
+                        const { x, y, width, value, index } = props;
+                        const item = areaAggregation[index];
+                        return (
+                          <g>
+                            <text
+                              x={x + width / 2}
+                              y={y - 20}
+                              fill="#137fec"
+                              textAnchor="middle"
+                              fontSize={14}
+                              fontWeight={900}
+                            >
+                              {item.trabalhando}%
+                            </text>
+                            <text
+                              x={x + width / 2}
+                              y={y - 5}
+                              fill="#64748b"
+                              textAnchor="middle"
+                              fontSize={10}
+                              fontWeight={700}
+                            >
+                              {item?.rawCount || 0} colab.
+                            </text>
+                          </g>
+                        );
+                      }}
+                    />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
@@ -300,7 +441,7 @@ export const DashboardView: React.FC<Props> = ({ currentMonth, onMonthChange, se
               </div>
             </div>
           </div>
-        </div>
+        </div >
 
         <div className="bg-white dark:bg-surface-dark border border-slate-200 dark:border-slate-800 rounded-[32px] overflow-hidden shadow-sm">
           <div className="p-8 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
@@ -340,8 +481,8 @@ export const DashboardView: React.FC<Props> = ({ currentMonth, onMonthChange, se
             </table>
           </div>
         </div>
-      </div>
-    </div>
+      </div >
+    </div >
   );
 };
 

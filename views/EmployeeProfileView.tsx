@@ -17,6 +17,7 @@ interface EmployeeProfileProps {
     whatsapp?: string;
     login?: string;
     level?: string;
+    shift?: string;
     perf?: number;
     stats?: any;
     absenteeism?: string;
@@ -223,6 +224,7 @@ export const EmployeeProfileView: React.FC<EmployeeProfileProps> = ({ employee, 
           <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Dados de Registro</h3>
           <div className="space-y-3">
             <DetailItem icon="hub" label="Área" value={employee.cluster || 'Geral'} />
+            <DetailItem icon="schedule" label="Horário de Trabalho" value={employee.shift || 'Comercial (8h-18h)'} />
             <DetailItem icon="location_on" label="Endereço" value={employee.address || 'Não informado'} />
             <DetailItem icon="phone" label="Contato" value={employee.whatsapp || 'WhatsApp'} />
           </div>

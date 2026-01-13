@@ -20,6 +20,7 @@ interface EmployeeContextType {
     employees: Employee[];
     rawData: any[]; // Dados brutos da última importação
     updateEmployees: (newEmployees: Employee[]) => void;
+    refreshEmployees: () => Promise<void>;
     importBankData: (data: any[]) => void;
     formatBalance: (seconds: number) => string;
     loading: boolean;
@@ -228,7 +229,15 @@ export const EmployeeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
 
     return (
-        <EmployeeContext.Provider value={{ employees, rawData, updateEmployees, importBankData, formatBalance, loading }}>
+        <EmployeeContext.Provider value={{
+            employees,
+            rawData,
+            updateEmployees,
+            refreshEmployees: () => refreshEmployees(),
+            importBankData,
+            formatBalance,
+            loading
+        }}>
             {children}
         </EmployeeContext.Provider>
     );
