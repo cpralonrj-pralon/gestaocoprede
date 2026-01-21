@@ -1,7 +1,8 @@
 const https = require('https');
 
-const SUPABASE_URL = 'https://qdrpxvfnuitnwbnvirtt.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFkcnB4dmZudWl0bndibnZpcnR0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgxNjA1NzcsImV4cCI6MjA4MzczNjU3N30.Dq2X7hD96RIJDWIdLJK4lzOYI1zzsBGIrkAK-0uo-GM';
+const SUPABASE_URL = 'https://hvznldvsxqxefriflccu.supabase.co';
+// Preencha com sua nova chave para testar
+const SUPABASE_ANON_KEY = '';
 
 console.log('Testing connection to:', SUPABASE_URL);
 

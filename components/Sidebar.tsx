@@ -27,9 +27,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule,
   ];
 
   const userRole = userProfile?.role?.toUpperCase() || 'ADMIN'; // Default to ADMIN if no profile (for global owners)
+  const isAdmin = userRole === 'ADMIN' || userRole === 'DIRETORIA' || userRole === 'ROOT';
 
   const menuItems = allMenuItems.filter(item => {
-    if (userRole === 'ADMIN') return true;
+    if (isAdmin) return true;
     return item.roles.includes(userRole) ||
       (userRole.includes('COORDENADOR') && item.roles.includes('GESTOR')) ||
       (userRole.includes('SUPERVISOR') && item.roles.includes('GESTOR')) ||

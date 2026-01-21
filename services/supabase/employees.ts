@@ -1,7 +1,6 @@
-import { supabase, Employee } from './client';
+import { supabase, Employee, SUPABASE_URL, SUPABASE_ANON_KEY } from './client';
 
-const SUPABASE_URL = 'https://qdrpxvfnuitnwbnvirtt.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFkcnB4dmZudWl0bndibnZpcnR0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgxNjA1NzcsImV4cCI6MjA4MzczNjU3N30.Dq2X7hD96RIJDWIdLJK4lzOYI1zzsBGIrkAK-0uo-GM';
+// Constants now imported from ./client.ts
 
 /**
  * Get all employees - usa fetch direto para evitar AbortError
@@ -137,8 +136,7 @@ export async function getEmployeeByUserId(userId: string, retries: number = 3): 
  * Versão alternativa usando fetch direto - bypassa problemas do Supabase Client
  */
 async function getEmployeeByUserIdDirect(userId: string): Promise<Employee | null> {
-    const SUPABASE_URL = 'https://qdrpxvfnuitnwbnvirtt.supabase.co';
-    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFkcnB4dmZudWl0bndibnZpcnR0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgxNjA1NzcsImV4cCI6MjA4MzczNjU3N30.Dq2X7hD96RIJDWIdLJK4lzOYI1zzsBGIrkAK-0uo-GM';
+    // Constants imported from scope
 
     const url = `${SUPABASE_URL}/rest/v1/employees?user_id=eq.${userId}&select=*`;
 
